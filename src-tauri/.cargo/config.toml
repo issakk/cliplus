@@ -1,0 +1,6 @@
+[build]
+# MSVC toolchain is required on Windows
+# Run from "Developer Command Prompt" or use build.bat
+
+[target.x86_64-pc-windows-msvc]
+# linker is auto-detected from MSVC environment

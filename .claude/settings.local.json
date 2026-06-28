@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create *)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Bash(npm install *)",
+      "Bash(where link *)",
+      "Bash(rustup show *)",
+      "Bash(cmd.exe /c \"where /R \\\\\"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\\" link.exe 2>nul\")",
+      "Bash(cmd.exe /c \"where /R \\\\\"C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\\" link.exe 2>nul\")",
+      "Bash(cmd.exe /c \"where /R \\\\\"C:\\\\Program Files \\(x86\\)\\\\Windows Kits\\\\\" link.exe 2>nul\")",
+      "Bash(rustc --print sysroot)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft Visual Studio//**)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft Visual Studio/Installer/**)",
+      "Bash(cmd.exe /c \"\\\\\"C:\\\\Program Files \\(x86\\)\\\\Microsoft Visual Studio\\\\Installer\\\\vswhere.exe\\\\\" -latest -property installationPath 2>nul\")",
+      "Bash(/c/Program Files \\(x86\\)/Microsoft Visual Studio/Installer/vswhere.exe *)",
+      "Bash(rustup target *)",
+      "Bash(rustup toolchain *)",
+      "Bash(cargo +stable-x86_64-pc-windows-gnu check)",
+      "Bash(scoop list *)",
+      "Bash(scoop install *)"
+    ]
+  }
+}

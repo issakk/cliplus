@@ -1,4 +1,6 @@
 pub mod clips;
+pub mod settings;
+pub mod snippets;
 
 use rusqlite::Connection;
 use std::path::Path;

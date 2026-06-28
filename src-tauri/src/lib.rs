@@ -75,6 +75,12 @@ pub fn run() {
             commands::delete_clip,
             commands::toggle_pin,
             commands::toggle_window,
+            commands::get_snippets,
+            commands::create_snippet,
+            commands::update_snippet,
+            commands::delete_snippet_cmd,
+            commands::get_setting,
+            commands::set_setting,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

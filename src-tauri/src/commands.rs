@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::db::clips::Clip;
+use crate::db::snippets::Snippet;
 use crate::AppState;
 
 #[tauri::command]
@@ -74,4 +75,54 @@ pub fn toggle_window(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_snippets(
+    state: State<'_, AppState>,
+    group_name: Option<String>,
+) -> Result<Vec<Snippet>, String> {
+    let db = state.db.lock().unwrap();
+    db.get_snippets(group_name.as_deref())
+}
+
+#[tauri::command]
+pub fn create_snippet(
+    state: State<'_, AppState>,
+    title: String,
+    content: String,
+    group_name: Option<String>,
+) -> Result<String, String> {
+    let db = state.db.lock().unwrap();
+    db.insert_snippet(&title, &content, group_name.as_deref())
+}
+
+#[tauri::command]
+pub fn update_snippet(
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+    content: String,
+    group_name: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().unwrap();
+    db.update_snippet(&id, &title, &content, group_name.as_deref())
+}
+
+#[tauri::command]
+pub fn delete_snippet_cmd(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let db = state.db.lock().unwrap();
+    db.delete_snippet(&id)
+}
+
+#[tauri::command]
+pub fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
+    let db = state.db.lock().unwrap();
+    db.get_setting(&key)
+}
+
+#[tauri::command]
+pub fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    let db = state.db.lock().unwrap();
+    db.set_setting(&key, &value)
 }

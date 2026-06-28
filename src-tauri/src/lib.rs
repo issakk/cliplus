@@ -1,6 +1,7 @@
 mod clipboard;
 mod commands;
 mod db;
+mod sync;
 mod tray;
 
 use std::sync::Mutex;
@@ -81,6 +82,11 @@ pub fn run() {
             commands::delete_snippet_cmd,
             commands::get_setting,
             commands::set_setting,
+            commands::sync_now,
+            commands::get_sync_status,
+            commands::start_onedrive_login,
+            commands::poll_onedrive_login,
+            commands::cleanup_old_records,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

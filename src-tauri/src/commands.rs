@@ -126,3 +126,185 @@ pub fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Re
     let db = state.db.lock().unwrap();
     db.set_setting(&key, &value)
 }
+
+// ===== 同步命令 =====
+
+#[tauri::command]
+pub async fn sync_now(state: State<'_, AppState>) -> Result<crate::sync::types::SyncResult, String> {
+    use crate::sync::{onedrive, webdav};
+    use crate::sync::types::SyncBackend;
+
+    // 读取同步配置
+    let (backend, device_name, last_sync_ts) = {
+        let db = state.db.lock().unwrap();
+        let backend_str = db.get_setting("sync_backend")?.unwrap_or_default();
+        let device = db.get_setting("device_name")?.unwrap_or_else(|| "unknown".into());
+        let ts: i64 = db
+            .get_setting("last_sync_ts")?
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let backend = match backend_str.as_str() {
+            "onedrive" => SyncBackend::OneDrive,
+            "webdav" => SyncBackend::WebDAV,
+            _ => SyncBackend::None,
+        };
+        (backend, device, ts)
+    };
+
+    if backend == SyncBackend::None {
+        return Err("未配置同步后端".into());
+    }
+
+    // 导出本地变更
+    let entries = {
+        let db = state.db.lock().unwrap();
+        db.export_entries(last_sync_ts)?
+    };
+
+    let sync_content = crate::db::Database::generate_sync_file(&entries)?;
+
+    // 上传到云端
+    match &backend {
+        SyncBackend::OneDrive => {
+            let refresh_token = {
+                let db = state.db.lock().unwrap();
+                db.get_setting("onedrive_refresh_token")?.unwrap_or_default()
+            };
+            if refresh_token.is_empty() {
+                return Err("OneDrive 未登录".into());
+            }
+            let mut client = onedrive::OneDriveClient::new(
+                onedrive::DEFAULT_CLIENT_ID.to_string(),
+                refresh_token,
+            );
+            client.upload_file("clipsync/sync.jsonl", &sync_content).await?;
+        }
+        SyncBackend::WebDAV => {
+            let (url, user, pass) = {
+                let db = state.db.lock().unwrap();
+                let url = db.get_setting("webdav_url")?.unwrap_or_default();
+                let user = db.get_setting("webdav_username")?.unwrap_or_default();
+                let pass = db.get_setting("webdav_password")?.unwrap_or_default();
+                (url, user, pass)
+            };
+            if url.is_empty() {
+                return Err("WebDAV 未配置".into());
+            }
+            let client = webdav::WebDAVClient::new(url, user, pass);
+            client.upload_file("clipsync/sync.jsonl", &sync_content).await?;
+        }
+        _ => {}
+    }
+
+    // 从云端下载并合并
+    let remote_content: Option<String> = match &backend {
+        SyncBackend::OneDrive => {
+            let refresh_token = {
+                let db = state.db.lock().unwrap();
+                db.get_setting("onedrive_refresh_token")?.unwrap_or_default()
+            };
+            let mut client = onedrive::OneDriveClient::new(
+                onedrive::DEFAULT_CLIENT_ID.to_string(),
+                refresh_token,
+            );
+            client.download_file("clipsync/sync.jsonl").await?
+        }
+        SyncBackend::WebDAV => {
+            let (url, user, pass) = {
+                let db = state.db.lock().unwrap();
+                let url = db.get_setting("webdav_url")?.unwrap_or_default();
+                let user = db.get_setting("webdav_username")?.unwrap_or_default();
+                let pass = db.get_setting("webdav_password")?.unwrap_or_default();
+                (url, user, pass)
+            };
+            let client = webdav::WebDAVClient::new(url, user, pass);
+            client.download_file("clipsync/sync.jsonl").await?
+        }
+        _ => None,
+    };
+
+    let mut result = crate::sync::types::SyncResult {
+        pushed: entries.len() as u32,
+        pulled: 0,
+        merged: 0,
+        errors: Vec::new(),
+    };
+
+    if let Some(content) = remote_content {
+        let remote_entries = crate::db::Database::parse_sync_file(&content)?;
+        result.pulled = remote_entries.len() as u32;
+
+        let (merged, errors) = {
+            let db = state.db.lock().unwrap();
+            db.import_entries(&remote_entries, &device_name)?
+        };
+        result.merged = merged;
+        result.errors = errors;
+    }
+
+    // 更新同步时间
+    {
+        let db = state.db.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis().to_string();
+        db.set_setting("last_sync_ts", &now)?;
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn get_sync_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().unwrap();
+    let backend = db.get_setting("sync_backend")?.unwrap_or_default();
+    let last_ts: i64 = db
+        .get_setting("last_sync_ts")?
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let device = db.get_setting("device_name")?.unwrap_or_else(|| "unknown".into());
+    let onedrive_logged = db
+        .get_setting("onedrive_refresh_token")?
+        .map(|t| !t.is_empty())
+        .unwrap_or(false);
+
+    Ok(serde_json::json!({
+        "backend": backend,
+        "last_sync_ts": last_ts,
+        "device_name": device,
+        "onedrive_logged_in": onedrive_logged,
+    }))
+}
+
+#[tauri::command]
+pub async fn start_onedrive_login() -> Result<serde_json::Value, String> {
+    use crate::sync::onedrive;
+    let resp = onedrive::start_device_code_flow(onedrive::DEFAULT_CLIENT_ID).await?;
+    Ok(serde_json::json!({
+        "user_code": resp.user_code,
+        "verification_uri": resp.verification_uri,
+        "expires_in": resp.expires_in,
+        "device_code": resp.device_code,
+    }))
+}
+
+#[tauri::command]
+pub async fn poll_onedrive_login(
+    state: State<'_, AppState>,
+    device_code: String,
+) -> Result<serde_json::Value, String> {
+    use crate::sync::onedrive;
+    let resp = onedrive::poll_device_code(onedrive::DEFAULT_CLIENT_ID, &device_code).await?;
+
+    // 保存 refresh_token
+    let refresh_token = resp.refresh_token.ok_or("未获取到 refresh_token")?;
+    let db = state.db.lock().unwrap();
+    db.set_setting("onedrive_refresh_token", &refresh_token)?;
+    db.set_setting("sync_backend", "onedrive")?;
+
+    Ok(serde_json::json!({ "success": true }))
+}
+
+#[tauri::command]
+pub fn cleanup_old_records(state: State<'_, AppState>, days: i64) -> Result<u32, String> {
+    let db = state.db.lock().unwrap();
+    db.cleanup_deleted(days)
+}

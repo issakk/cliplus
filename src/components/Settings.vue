@@ -11,6 +11,22 @@ const syncBackend = ref<"onedrive" | "webdav" | "">("");
 const cleanupMessage = ref("");
 const isListeningHotkey = ref(false);
 
+// OneDrive 登录状态
+const odLoggedIn = ref(false);
+const odUserCode = ref("");
+const odVerifyUri = ref("");
+const odDeviceCode = ref("");
+const odShowLogin = ref(false);
+const odPolling = ref(false);
+
+// WebDAV 配置
+const webdavUrl = ref("");
+const webdavUser = ref("");
+const webdavPass = ref("");
+
+// 同步状态
+const syncStatus = ref<any>(null);
+
 async function loadSettings() {
   const h = await invoke<string | null>("get_setting", { key: "hotkey" });
   if (h) hotkey.value = h;
@@ -18,10 +34,20 @@ async function loadSettings() {
   const a = await invoke<string | null>("get_setting", { key: "auto_start" });
   autoStart.value = a === "true";
 
-  const s = await invoke<string | null>("get_setting", {
-    key: "sync_backend",
-  });
+  const s = await invoke<string | null>("get_setting", { key: "sync_backend" });
   if (s === "onedrive" || s === "webdav") syncBackend.value = s;
+
+  const url = await invoke<string | null>("get_setting", { key: "webdav_url" });
+  if (url) webdavUrl.value = url;
+  const user = await invoke<string | null>("get_setting", { key: "webdav_username" });
+  if (user) webdavUser.value = user;
+  const pass = await invoke<string | null>("get_setting", { key: "webdav_password" });
+  if (pass) webdavPass.value = pass;
+
+  try {
+    syncStatus.value = await invoke("get_sync_status");
+    odLoggedIn.value = syncStatus.value?.onedrive_logged_in ?? false;
+  } catch {}
 }
 
 async function saveSetting(key: string, value: string) {
@@ -79,6 +105,41 @@ async function onThemeChange(t: "dark" | "light") {
 async function onSyncBackendChange(backend: "onedrive" | "webdav" | "") {
   syncBackend.value = backend;
   await saveSetting("sync_backend", backend);
+}
+
+async function startOneDriveLogin() {
+  try {
+    const resp: any = await invoke("start_onedrive_login");
+    odUserCode.value = resp.user_code;
+    odVerifyUri.value = resp.verification_uri;
+    odDeviceCode.value = resp.device_code;
+    odShowLogin.value = true;
+  } catch (e: any) {
+    cleanupMessage.value = "OneDrive 登录失败: " + e;
+    setTimeout(() => (cleanupMessage.value = ""), 5000);
+  }
+}
+
+async function confirmOneDriveLogin() {
+  odPolling.value = true;
+  try {
+    await invoke("poll_onedrive_login", { deviceCode: odDeviceCode.value });
+    odLoggedIn.value = true;
+    odShowLogin.value = false;
+    cleanupMessage.value = "OneDrive 登录成功！";
+  } catch (e: any) {
+    cleanupMessage.value = "登录轮询失败，请重试: " + e;
+  }
+  odPolling.value = false;
+  setTimeout(() => (cleanupMessage.value = ""), 5000);
+}
+
+async function saveWebDAV() {
+  await saveSetting("webdav_url", webdavUrl.value);
+  await saveSetting("webdav_username", webdavUser.value);
+  await saveSetting("webdav_password", webdavPass.value);
+  cleanupMessage.value = "WebDAV 配置已保存";
+  setTimeout(() => (cleanupMessage.value = ""), 3000);
 }
 
 async function cleanupOldRecords() {
@@ -165,11 +226,11 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- 同步配置 (占位) -->
+      <!-- 同步配置 -->
       <div class="setting-item">
         <div class="setting-label">
           <span class="label-text">云同步</span>
-          <span class="label-desc">跨设备同步剪切板 (Phase 3)</span>
+          <span class="label-desc">跨设备同步剪切板</span>
         </div>
         <div class="setting-control">
           <div class="segment">
@@ -192,6 +253,47 @@ onMounted(() => {
               WebDAV
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- OneDrive 登录 -->
+      <div v-if="syncBackend === 'onedrive'" class="setting-item">
+        <div class="setting-label">
+          <span class="label-text">OneDrive 登录</span>
+          <span class="label-desc">{{ odLoggedIn ? '已登录' : '未登录' }}</span>
+        </div>
+        <div class="setting-control">
+          <button v-if="!odLoggedIn && !odShowLogin" class="btn-primary" @click="startOneDriveLogin">
+            登录
+          </button>
+          <span v-if="odLoggedIn" class="status-ok">✓ 已连接</span>
+        </div>
+      </div>
+
+      <!-- OneDrive 设备码确认 -->
+      <div v-if="odShowLogin" class="setting-item" style="flex-direction: column; align-items: flex-start;">
+        <div class="setting-label" style="margin-bottom: 8px;">
+          <span class="label-text">请访问以下网址并输入验证码：</span>
+          <a :href="odVerifyUri" target="_blank" class="link">{{ odVerifyUri }}</a>
+        </div>
+        <div style="font-size: 20px; font-weight: bold; font-family: monospace; color: var(--accent); margin-bottom: 8px;">
+          {{ odUserCode }}
+        </div>
+        <button class="btn-primary" :disabled="odPolling" @click="confirmOneDriveLogin">
+          {{ odPolling ? "等待授权..." : "已完成授权" }}
+        </button>
+      </div>
+
+      <!-- WebDAV 配置 -->
+      <div v-if="syncBackend === 'webdav'" class="setting-item" style="flex-direction: column; align-items: stretch;">
+        <div class="setting-label" style="margin-bottom: 8px;">
+          <span class="label-text">WebDAV 配置</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <input v-model="webdavUrl" type="text" placeholder="https://dav.example.com" class="input" />
+          <input v-model="webdavUser" type="text" placeholder="用户名" class="input" />
+          <input v-model="webdavPass" type="password" placeholder="密码" class="input" />
+          <button class="btn-primary" style="align-self: flex-end;" @click="saveWebDAV">保存</button>
         </div>
       </div>
 
@@ -413,5 +515,57 @@ onMounted(() => {
   padding: 8px 20px 12px;
   font-size: 13px;
   color: var(--green);
+}
+
+/* 主要按钮 */
+.btn-primary {
+  padding: 6px 14px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn-primary:hover {
+  opacity: 0.85;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 状态标记 */
+.status-ok {
+  font-size: 13px;
+  color: var(--green);
+  font-weight: 500;
+}
+
+/* 链接 */
+.link {
+  color: var(--accent);
+  text-decoration: underline;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* 输入框 */
+.input {
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent);
 }
 </style>

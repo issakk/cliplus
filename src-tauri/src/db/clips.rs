@@ -84,11 +84,10 @@ impl Database {
         let (sql, has_query): (String, bool) = match query {
             Some(q) if !q.is_empty() => (
                 format!(
-                    "SELECT c.id, c.content_text, c.content_type, c.source_app, c.is_pinned, c.created_at
-                     FROM clips c
-                     INNER JOIN clips_fts f ON f.rowid = c.rowid
-                     WHERE clips_fts MATCH ?1 AND c.is_deleted = 0
-                     ORDER BY c.is_pinned DESC, c.id DESC
+                    "SELECT id, content_text, content_type, source_app, is_pinned, created_at
+                     FROM clips
+                     WHERE is_deleted = 0 AND content_text LIKE '%' || ?1 || '%'
+                     ORDER BY is_pinned DESC, id DESC
                      LIMIT {limit}"
                 ),
                 true,

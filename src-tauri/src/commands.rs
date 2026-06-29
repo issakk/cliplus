@@ -1,4 +1,6 @@
-use tauri::State;
+use std::path::PathBuf;
+
+use tauri::{Manager, State};
 
 use crate::db::clips::Clip;
 use crate::db::snippets::Snippet;
@@ -42,7 +44,6 @@ pub fn copy_clip(state: State<'_, AppState>, id: String) -> Result<(), String> {
             std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
             let _ = GlobalUnlock(h_global);
 
-            // HGLOBAL 和 HANDLE 都包装 *mut c_void，直接转换
             let h_handle = HANDLE(h_global.0);
             SetClipboardData(13, h_handle).map_err(|e| e.to_string())?;
             CloseClipboard().map_err(|e| e.to_string())?;
@@ -65,11 +66,11 @@ pub fn toggle_pin(state: State<'_, AppState>, id: String) -> Result<(), String> 
 
 #[tauri::command]
 pub fn toggle_window(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
     if let Some(window) = app.get_webview_window("main") {
         if window.is_visible().unwrap_or(false) {
             window.hide().map_err(|e| e.to_string())?;
         } else {
+            window.set_skip_taskbar(true).ok();
             window.show().map_err(|e| e.to_string())?;
             window.set_focus().map_err(|e| e.to_string())?;
         }
@@ -127,184 +128,220 @@ pub fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Re
     db.set_setting(&key, &value)
 }
 
-// ===== 同步命令 =====
-
-#[tauri::command]
-pub async fn sync_now(state: State<'_, AppState>) -> Result<crate::sync::types::SyncResult, String> {
-    use crate::sync::{onedrive, webdav};
-    use crate::sync::types::SyncBackend;
-
-    // 读取同步配置
-    let (backend, device_name, last_sync_ts) = {
-        let db = state.db.lock().unwrap();
-        let backend_str = db.get_setting("sync_backend")?.unwrap_or_default();
-        let device = db.get_setting("device_name")?.unwrap_or_else(|| "unknown".into());
-        let ts: i64 = db
-            .get_setting("last_sync_ts")?
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        let backend = match backend_str.as_str() {
-            "onedrive" => SyncBackend::OneDrive,
-            "webdav" => SyncBackend::WebDAV,
-            _ => SyncBackend::None,
-        };
-        (backend, device, ts)
-    };
-
-    if backend == SyncBackend::None {
-        return Err("未配置同步后端".into());
-    }
-
-    // 导出本地变更
-    let entries = {
-        let db = state.db.lock().unwrap();
-        db.export_entries(last_sync_ts)?
-    };
-
-    let sync_content = crate::db::Database::generate_sync_file(&entries)?;
-
-    // 上传到云端
-    match &backend {
-        SyncBackend::OneDrive => {
-            let refresh_token = {
-                let db = state.db.lock().unwrap();
-                db.get_setting("onedrive_refresh_token")?.unwrap_or_default()
-            };
-            if refresh_token.is_empty() {
-                return Err("OneDrive 未登录".into());
-            }
-            let mut client = onedrive::OneDriveClient::new(
-                onedrive::DEFAULT_CLIENT_ID.to_string(),
-                refresh_token,
-            );
-            client.upload_file("clipsync/sync.jsonl", &sync_content).await?;
-        }
-        SyncBackend::WebDAV => {
-            let (url, user, pass) = {
-                let db = state.db.lock().unwrap();
-                let url = db.get_setting("webdav_url")?.unwrap_or_default();
-                let user = db.get_setting("webdav_username")?.unwrap_or_default();
-                let pass = db.get_setting("webdav_password")?.unwrap_or_default();
-                (url, user, pass)
-            };
-            if url.is_empty() {
-                return Err("WebDAV 未配置".into());
-            }
-            let client = webdav::WebDAVClient::new(url, user, pass);
-            client.upload_file("clipsync/sync.jsonl", &sync_content).await?;
-        }
-        _ => {}
-    }
-
-    // 从云端下载并合并
-    let remote_content: Option<String> = match &backend {
-        SyncBackend::OneDrive => {
-            let refresh_token = {
-                let db = state.db.lock().unwrap();
-                db.get_setting("onedrive_refresh_token")?.unwrap_or_default()
-            };
-            let mut client = onedrive::OneDriveClient::new(
-                onedrive::DEFAULT_CLIENT_ID.to_string(),
-                refresh_token,
-            );
-            client.download_file("clipsync/sync.jsonl").await?
-        }
-        SyncBackend::WebDAV => {
-            let (url, user, pass) = {
-                let db = state.db.lock().unwrap();
-                let url = db.get_setting("webdav_url")?.unwrap_or_default();
-                let user = db.get_setting("webdav_username")?.unwrap_or_default();
-                let pass = db.get_setting("webdav_password")?.unwrap_or_default();
-                (url, user, pass)
-            };
-            let client = webdav::WebDAVClient::new(url, user, pass);
-            client.download_file("clipsync/sync.jsonl").await?
-        }
-        _ => None,
-    };
-
-    let mut result = crate::sync::types::SyncResult {
-        pushed: entries.len() as u32,
-        pulled: 0,
-        merged: 0,
-        errors: Vec::new(),
-    };
-
-    if let Some(content) = remote_content {
-        let remote_entries = crate::db::Database::parse_sync_file(&content)?;
-        result.pulled = remote_entries.len() as u32;
-
-        let (merged, errors) = {
-            let db = state.db.lock().unwrap();
-            db.import_entries(&remote_entries, &device_name)?
-        };
-        result.merged = merged;
-        result.errors = errors;
-    }
-
-    // 更新同步时间
-    {
-        let db = state.db.lock().unwrap();
-        let now = chrono::Utc::now().timestamp_millis().to_string();
-        db.set_setting("last_sync_ts", &now)?;
-    }
-
-    Ok(result)
-}
-
-#[tauri::command]
-pub fn get_sync_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let db = state.db.lock().unwrap();
-    let backend = db.get_setting("sync_backend")?.unwrap_or_default();
-    let last_ts: i64 = db
-        .get_setting("last_sync_ts")?
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let device = db.get_setting("device_name")?.unwrap_or_else(|| "unknown".into());
-    let onedrive_logged = db
-        .get_setting("onedrive_refresh_token")?
-        .map(|t| !t.is_empty())
-        .unwrap_or(false);
-
-    Ok(serde_json::json!({
-        "backend": backend,
-        "last_sync_ts": last_ts,
-        "device_name": device,
-        "onedrive_logged_in": onedrive_logged,
-    }))
-}
-
-#[tauri::command]
-pub async fn start_onedrive_login() -> Result<serde_json::Value, String> {
-    use crate::sync::onedrive;
-    let resp = onedrive::start_device_code_flow(onedrive::DEFAULT_CLIENT_ID).await?;
-    Ok(serde_json::json!({
-        "user_code": resp.user_code,
-        "verification_uri": resp.verification_uri,
-        "expires_in": resp.expires_in,
-        "device_code": resp.device_code,
-    }))
-}
-
-#[tauri::command]
-pub async fn poll_onedrive_login(
-    state: State<'_, AppState>,
-    device_code: String,
-) -> Result<serde_json::Value, String> {
-    use crate::sync::onedrive;
-    let resp = onedrive::poll_device_code(onedrive::DEFAULT_CLIENT_ID, &device_code).await?;
-
-    // 保存 refresh_token
-    let refresh_token = resp.refresh_token.ok_or("未获取到 refresh_token")?;
-    let db = state.db.lock().unwrap();
-    db.set_setting("onedrive_refresh_token", &refresh_token)?;
-    db.set_setting("sync_backend", "onedrive")?;
-
-    Ok(serde_json::json!({ "success": true }))
-}
-
 #[tauri::command]
 pub fn cleanup_old_records(state: State<'_, AppState>, days: i64) -> Result<u32, String> {
     let db = state.db.lock().unwrap();
     db.cleanup_deleted(days)
+}
+
+// ===== 快捷键管理 =====
+
+/// 注册快捷键（供 lib.rs 启动时和 register_hotkey 命令共用）
+pub fn register_hotkey_inner(app: &tauri::AppHandle, hotkey: &str) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{
+        GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
+    };
+
+    // 先注销旧的
+    let _ = app.global_shortcut().unregister_all();
+
+    // 解析快捷键字符串，如 "Ctrl+Shift+V"
+    let parts: Vec<&str> = hotkey.split('+').map(|s| s.trim()).collect();
+    if parts.len() < 2 {
+        return Err("快捷键至少需要 2 个组合键".into());
+    }
+
+    let mut modifiers = Modifiers::empty();
+    let mut code = None;
+
+    for part in &parts {
+        match part.to_uppercase().as_str() {
+            "CTRL" | "CONTROL" => modifiers |= Modifiers::CONTROL,
+            "SHIFT" => modifiers |= Modifiers::SHIFT,
+            "ALT" => modifiers |= Modifiers::ALT,
+            "META" | "SUPER" | "WIN" => modifiers |= Modifiers::META,
+            key => {
+                code = Some(parse_key_code(key)?);
+            }
+        }
+    }
+
+    let code = code.ok_or("缺少普通按键")?;
+    let shortcut = Shortcut::new(Some(modifiers), code);
+
+    let app_handle = app.clone();
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |_app, _sc, event| {
+            if event.state() == ShortcutState::Pressed {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.hide();
+                    } else {
+                        let _ = window.set_skip_taskbar(true);
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+        })
+        .map_err(|e| format!("注册快捷键失败: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn register_hotkey(app: tauri::AppHandle, hotkey: String) -> Result<(), String> {
+    register_hotkey_inner(&app, &hotkey)
+}
+
+fn parse_key_code(key: &str) -> Result<tauri_plugin_global_shortcut::Code, String> {
+    use tauri_plugin_global_shortcut::Code;
+    match key {
+        "A" => Ok(Code::KeyA),
+        "B" => Ok(Code::KeyB),
+        "C" => Ok(Code::KeyC),
+        "D" => Ok(Code::KeyD),
+        "E" => Ok(Code::KeyE),
+        "F" => Ok(Code::KeyF),
+        "G" => Ok(Code::KeyG),
+        "H" => Ok(Code::KeyH),
+        "I" => Ok(Code::KeyI),
+        "J" => Ok(Code::KeyJ),
+        "K" => Ok(Code::KeyK),
+        "L" => Ok(Code::KeyL),
+        "M" => Ok(Code::KeyM),
+        "N" => Ok(Code::KeyN),
+        "O" => Ok(Code::KeyO),
+        "P" => Ok(Code::KeyP),
+        "Q" => Ok(Code::KeyQ),
+        "R" => Ok(Code::KeyR),
+        "S" => Ok(Code::KeyS),
+        "T" => Ok(Code::KeyT),
+        "U" => Ok(Code::KeyU),
+        "V" => Ok(Code::KeyV),
+        "W" => Ok(Code::KeyW),
+        "X" => Ok(Code::KeyX),
+        "Y" => Ok(Code::KeyY),
+        "Z" => Ok(Code::KeyZ),
+        "0" => Ok(Code::Digit0),
+        "1" => Ok(Code::Digit1),
+        "2" => Ok(Code::Digit2),
+        "3" => Ok(Code::Digit3),
+        "4" => Ok(Code::Digit4),
+        "5" => Ok(Code::Digit5),
+        "6" => Ok(Code::Digit6),
+        "7" => Ok(Code::Digit7),
+        "8" => Ok(Code::Digit8),
+        "9" => Ok(Code::Digit9),
+        "SPACE" => Ok(Code::Space),
+        "F1" => Ok(Code::F1),
+        "F2" => Ok(Code::F2),
+        "F3" => Ok(Code::F3),
+        "F4" => Ok(Code::F4),
+        "F5" => Ok(Code::F5),
+        "F6" => Ok(Code::F6),
+        "F7" => Ok(Code::F7),
+        "F8" => Ok(Code::F8),
+        "F9" => Ok(Code::F9),
+        "F10" => Ok(Code::F10),
+        "F11" => Ok(Code::F11),
+        "F12" => Ok(Code::F12),
+        _ => Err(format!("不支持的按键: {}", key)),
+    }
+}
+
+// ===== 数据库路径管理 =====
+
+/// 读取配置文件中的数据库路径
+fn read_db_path_config() -> Result<String, String> {
+    let app_dir = dirs::data_local_dir()
+        .ok_or("无法获取数据目录")?
+        .join("clipsync");
+    let cfg_path = app_dir.join("db_path.txt");
+    if cfg_path.exists() {
+        let content = std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?;
+        let trimmed = content.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
+    Ok(app_dir.join("clipsync.db").to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn get_db_path() -> Result<String, String> {
+    read_db_path_config()
+}
+
+#[tauri::command]
+pub fn set_db_path(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let target_dir = PathBuf::from(&path);
+    if !target_dir.exists() {
+        return Err("目标目录不存在".into());
+    }
+
+    let new_db_path = target_dir.join("clipsync.db");
+
+    // 如果目标已存在数据库，检查 lock
+    if new_db_path.exists() {
+        let lock_file = target_dir.join(".clipsync.lock");
+        if lock_file.exists() {
+            if let Ok(meta) = std::fs::metadata(&lock_file) {
+                let age = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .unwrap_or(std::time::Duration::from_secs(999));
+                if age < std::time::Duration::from_secs(120) {
+                    return Err("目标数据库正被其他设备使用，请稍后再试".into());
+                }
+            }
+        }
+    }
+
+    // 获取当前数据库路径
+    let old_db_path = read_db_path_config()?;
+    let old_path = PathBuf::from(&old_db_path);
+
+    // 如果源和目标相同，直接返回
+    if old_path == new_db_path {
+        return Ok(new_db_path.to_string_lossy().to_string());
+    }
+
+    // 复制数据库文件（包括 WAL 和 SHM）
+    if old_path.exists() {
+        std::fs::copy(&old_path, &new_db_path).map_err(|e| format!("复制数据库失败: {}", e))?;
+    }
+    for suffix in &["-wal", "-shm"] {
+        let src = PathBuf::from(format!("{}{}", old_path.display(), suffix));
+        let dst = PathBuf::from(format!("{}{}", new_db_path.display(), suffix));
+        if src.exists() {
+            std::fs::copy(&src, &dst).ok();
+        }
+    }
+
+    // 保存新路径到配置文件
+    let app_dir = dirs::data_local_dir()
+        .ok_or("无法获取数据目录")?
+        .join("clipsync");
+    std::fs::write(
+        app_dir.join("db_path.txt"),
+        new_db_path.to_string_lossy().as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    // 关闭旧连接，打开新连接
+    {
+        let mut db = state.db.lock().unwrap();
+        *db = crate::db::Database::open(&new_db_path)?;
+    }
+
+    // 删除旧 lock，创建新 lock
+    let _ = std::fs::remove_file(state.db_dir.join(".clipsync.lock"));
+    let device = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".into());
+    let pid = std::process::id();
+    let lock_file = target_dir.join(".clipsync.lock");
+    std::fs::write(&lock_file, format!("{}:{}", device, pid)).ok();
+
+    Ok(new_db_path.to_string_lossy().to_string())
 }

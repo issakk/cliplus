@@ -2,7 +2,8 @@ pub mod clips;
 pub mod settings;
 pub mod snippets;
 
-use rusqlite::Connection;
+use chrono::Utc;
+use rusqlite::{params, Connection};
 use std::path::Path;
 
 pub struct Database {
@@ -24,6 +25,21 @@ impl Database {
         let db = Database { conn };
         db.migrate()?;
         Ok(db)
+    }
+
+    /// 物理删除已被软删除超过指定天数的 clip 记录
+    pub fn cleanup_deleted(&self, days: i64) -> Result<u32, String> {
+        let cutoff = Utc::now().timestamp_millis() - days * 86_400_000;
+
+        let count = self
+            .conn
+            .execute(
+                "DELETE FROM clips WHERE is_deleted = 1 AND updated_at < ?1",
+                params![cutoff],
+            )
+            .map_err(|e| e.to_string())?;
+
+        Ok(count as u32)
     }
 
     fn migrate(&self) -> Result<(), String> {

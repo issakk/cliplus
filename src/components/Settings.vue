@@ -1,31 +1,18 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
 const props = defineProps<{ theme: "dark" | "light" }>();
 const emit = defineEmits<{ "update:theme": [value: "dark" | "light"] }>();
 
 const hotkey = ref("Ctrl+Shift+V");
 const autoStart = ref(false);
-const syncBackend = ref<"onedrive" | "webdav" | "">("");
 const cleanupMessage = ref("");
 const isListeningHotkey = ref(false);
 
-// OneDrive 登录状态
-const odLoggedIn = ref(false);
-const odUserCode = ref("");
-const odVerifyUri = ref("");
-const odDeviceCode = ref("");
-const odShowLogin = ref(false);
-const odPolling = ref(false);
-
-// WebDAV 配置
-const webdavUrl = ref("");
-const webdavUser = ref("");
-const webdavPass = ref("");
-
-// 同步状态
-const syncStatus = ref<any>(null);
+// 数据库路径
+const dbPath = ref("");
 
 async function loadSettings() {
   const h = await invoke<string | null>("get_setting", { key: "hotkey" });
@@ -34,19 +21,8 @@ async function loadSettings() {
   const a = await invoke<string | null>("get_setting", { key: "auto_start" });
   autoStart.value = a === "true";
 
-  const s = await invoke<string | null>("get_setting", { key: "sync_backend" });
-  if (s === "onedrive" || s === "webdav") syncBackend.value = s;
-
-  const url = await invoke<string | null>("get_setting", { key: "webdav_url" });
-  if (url) webdavUrl.value = url;
-  const user = await invoke<string | null>("get_setting", { key: "webdav_username" });
-  if (user) webdavUser.value = user;
-  const pass = await invoke<string | null>("get_setting", { key: "webdav_password" });
-  if (pass) webdavPass.value = pass;
-
   try {
-    syncStatus.value = await invoke("get_sync_status");
-    odLoggedIn.value = syncStatus.value?.onedrive_logged_in ?? false;
+    dbPath.value = await invoke<string>("get_db_path");
   } catch {}
 }
 
@@ -66,14 +42,8 @@ function onHotkeyInput(e: KeyboardEvent) {
   if (e.metaKey) parts.push("Meta");
 
   const ignored = [
-    "Control",
-    "Shift",
-    "Alt",
-    "Meta",
-    "Ctrl",
-    "Shift",
-    "Alt",
-    "Meta",
+    "Control", "Shift", "Alt", "Meta",
+    "Ctrl", "Shift", "Alt", "Meta",
   ];
   if (!ignored.includes(e.key)) {
     parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
@@ -83,6 +53,11 @@ function onHotkeyInput(e: KeyboardEvent) {
     hotkey.value = parts.join("+");
     isListeningHotkey.value = false;
     saveSetting("hotkey", hotkey.value);
+    // 注册新的全局快捷键
+    invoke("register_hotkey", { hotkey: hotkey.value }).catch((e) => {
+      cleanupMessage.value = "快捷键注册失败: " + e;
+      setTimeout(() => (cleanupMessage.value = ""), 5000);
+    });
   }
 }
 
@@ -102,44 +77,22 @@ async function onThemeChange(t: "dark" | "light") {
   emit("update:theme", t);
 }
 
-async function onSyncBackendChange(backend: "onedrive" | "webdav" | "") {
-  syncBackend.value = backend;
-  await saveSetting("sync_backend", backend);
-}
+async function chooseDbPath() {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "选择数据库存放目录",
+  });
+  if (!selected) return;
 
-async function startOneDriveLogin() {
   try {
-    const resp: any = await invoke("start_onedrive_login");
-    odUserCode.value = resp.user_code;
-    odVerifyUri.value = resp.verification_uri;
-    odDeviceCode.value = resp.device_code;
-    odShowLogin.value = true;
+    const newPath = await invoke<string>("set_db_path", { path: selected });
+    dbPath.value = newPath;
+    cleanupMessage.value = "数据库已迁移到: " + newPath;
   } catch (e: any) {
-    cleanupMessage.value = "OneDrive 登录失败: " + e;
-    setTimeout(() => (cleanupMessage.value = ""), 5000);
+    cleanupMessage.value = "迁移失败: " + e;
   }
-}
-
-async function confirmOneDriveLogin() {
-  odPolling.value = true;
-  try {
-    await invoke("poll_onedrive_login", { deviceCode: odDeviceCode.value });
-    odLoggedIn.value = true;
-    odShowLogin.value = false;
-    cleanupMessage.value = "OneDrive 登录成功！";
-  } catch (e: any) {
-    cleanupMessage.value = "登录轮询失败，请重试: " + e;
-  }
-  odPolling.value = false;
   setTimeout(() => (cleanupMessage.value = ""), 5000);
-}
-
-async function saveWebDAV() {
-  await saveSetting("webdav_url", webdavUrl.value);
-  await saveSetting("webdav_username", webdavUser.value);
-  await saveSetting("webdav_password", webdavPass.value);
-  cleanupMessage.value = "WebDAV 配置已保存";
-  setTimeout(() => (cleanupMessage.value = ""), 3000);
 }
 
 async function cleanupOldRecords() {
@@ -147,7 +100,7 @@ async function cleanupOldRecords() {
     await invoke("cleanup_old_records", { days: 30 });
     cleanupMessage.value = "已清除 30 天前的记录";
   } catch {
-    cleanupMessage.value = "清理功能暂未实现 (Phase 3)";
+    cleanupMessage.value = "清理失败";
   }
   setTimeout(() => (cleanupMessage.value = ""), 3000);
 }
@@ -226,74 +179,18 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- 同步配置 -->
-      <div class="setting-item">
-        <div class="setting-label">
-          <span class="label-text">云同步</span>
-          <span class="label-desc">跨设备同步剪切板</span>
-        </div>
-        <div class="setting-control">
-          <div class="segment">
-            <button
-              :class="{ active: syncBackend === '' }"
-              @click="onSyncBackendChange('')"
-            >
-              关闭
-            </button>
-            <button
-              :class="{ active: syncBackend === 'onedrive' }"
-              @click="onSyncBackendChange('onedrive')"
-            >
-              OneDrive
-            </button>
-            <button
-              :class="{ active: syncBackend === 'webdav' }"
-              @click="onSyncBackendChange('webdav')"
-            >
-              WebDAV
-            </button>
-          </div>
-        </div>
-      </div>
+      <!-- 分隔线 -->
+      <div class="setting-divider"></div>
 
-      <!-- OneDrive 登录 -->
-      <div v-if="syncBackend === 'onedrive'" class="setting-item">
-        <div class="setting-label">
-          <span class="label-text">OneDrive 登录</span>
-          <span class="label-desc">{{ odLoggedIn ? '已登录' : '未登录' }}</span>
-        </div>
-        <div class="setting-control">
-          <button v-if="!odLoggedIn && !odShowLogin" class="btn-primary" @click="startOneDriveLogin">
-            登录
-          </button>
-          <span v-if="odLoggedIn" class="status-ok">✓ 已连接</span>
-        </div>
-      </div>
-
-      <!-- OneDrive 设备码确认 -->
-      <div v-if="odShowLogin" class="setting-item" style="flex-direction: column; align-items: flex-start;">
+      <!-- 数据库位置 -->
+      <div class="setting-item" style="flex-direction: column; align-items: stretch;">
         <div class="setting-label" style="margin-bottom: 8px;">
-          <span class="label-text">请访问以下网址并输入验证码：</span>
-          <a :href="odVerifyUri" target="_blank" class="link">{{ odVerifyUri }}</a>
+          <span class="label-text">数据库位置</span>
+          <span class="label-desc">选择同步盘目录（如 OneDrive）实现多设备同步</span>
         </div>
-        <div style="font-size: 20px; font-weight: bold; font-family: monospace; color: var(--accent); margin-bottom: 8px;">
-          {{ odUserCode }}
-        </div>
-        <button class="btn-primary" :disabled="odPolling" @click="confirmOneDriveLogin">
-          {{ odPolling ? "等待授权..." : "已完成授权" }}
-        </button>
-      </div>
-
-      <!-- WebDAV 配置 -->
-      <div v-if="syncBackend === 'webdav'" class="setting-item" style="flex-direction: column; align-items: stretch;">
-        <div class="setting-label" style="margin-bottom: 8px;">
-          <span class="label-text">WebDAV 配置</span>
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 6px;">
-          <input v-model="webdavUrl" type="text" placeholder="https://dav.example.com" class="input" />
-          <input v-model="webdavUser" type="text" placeholder="用户名" class="input" />
-          <input v-model="webdavPass" type="password" placeholder="密码" class="input" />
-          <button class="btn-primary" style="align-self: flex-end;" @click="saveWebDAV">保存</button>
+        <div class="db-path-row">
+          <span class="db-path-text" :title="dbPath">{{ dbPath }}</span>
+          <button class="btn-primary" @click="chooseDbPath">更改位置</button>
         </div>
       </div>
 
@@ -493,6 +390,28 @@ onMounted(() => {
   font-weight: 500;
 }
 
+/* 数据库路径 */
+.db-path-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.db-path-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-family: "Consolas", "Courier New", monospace;
+  color: var(--text-dim);
+  background: var(--bg-secondary);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 危险按钮 */
 .btn-danger {
   padding: 6px 14px;
@@ -528,6 +447,7 @@ onMounted(() => {
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s;
+  white-space: nowrap;
 }
 
 .btn-primary:hover {
@@ -537,35 +457,5 @@ onMounted(() => {
 .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* 状态标记 */
-.status-ok {
-  font-size: 13px;
-  color: var(--green);
-  font-weight: 500;
-}
-
-/* 链接 */
-.link {
-  color: var(--accent);
-  text-decoration: underline;
-  font-size: 12px;
-  word-break: break-all;
-}
-
-/* 输入框 */
-.input {
-  padding: 6px 10px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 13px;
-  outline: none;
-}
-
-.input:focus {
-  border-color: var(--accent);
 }
 </style>

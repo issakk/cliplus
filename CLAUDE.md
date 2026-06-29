@@ -15,21 +15,16 @@ Windows 剪切板管理器 + OneDrive/WebDAV 多设备同步。
 ```
 src-tauri/src/
 ├── main.rs          # 入口, 调用 lib::run()
-├── lib.rs           # Tauri Builder, 插件注册, 命令注册
+├── lib.rs           # Tauri Builder, 插件注册, 命令注册, 文件锁
 ├── commands.rs      # 所有 #[tauri::command] 函数
 ├── clipboard/mod.rs # Windows 剪切板监听 (AddClipboardFormatListener)
 ├── tray.rs          # 系统托盘
 ├── db/
-│   ├── mod.rs       # Database 结构体, 迁移, FTS5
+│   ├── mod.rs       # Database 结构体, 迁移, FTS5, cleanup_deleted
 │   ├── clips.rs     # Clips CRUD
 │   ├── snippets.rs  # Snippets CRUD
 │   └── settings.rs  # Settings (get_setting/set_setting, 复用 sync_meta 表)
-└── sync/
-    ├── mod.rs
-    ├── types.rs     # SyncEntry, SyncConfig, SyncBackend, SyncResult
-    ├── engine.rs    # export/import/merge/cleanup (impl Database)
-    ├── onedrive.rs  # OneDriveClient (OAuth Device Code + Graph API)
-    └── webdav.rs    # WebDAVClient (PUT/GET + Basic Auth)
+└── sync/            # (已清空, 同步改为数据库直接放同步盘)
 
 src/
 ├── main.ts          # Vue 入口
@@ -81,23 +76,19 @@ npm run tauri dev        # Tauri dev (自动启动 Vite + Rust 编译)
 
 ## 同步架构
 
+数据库直接放到同步盘目录（OneDrive / Dropbox / Google Drive 等），由客户端自动同步文件。
+
 ```
-本地操作 → SQLite (updated_at 更新)
+用户在设置页选择同步盘目录 → 数据库文件迁移到该目录
                 ↓
-export_entries(since_ts) → SyncEntry[]
+OneDrive/Dropbox 客户端自动同步 clipsync.db
                 ↓
-generate_sync_file → sync.jsonl (JSON-lines)
-                ↓
-upload → OneDrive (Graph API) / WebDAV (PUT)
-                ↓
-download → parse_sync_file → import_entries (LWW merge)
+其他设备启动时读取 db_path.txt 打开同一个数据库
 ```
 
-冲突策略: `updated_at` 大的胜出 (Last-Writer-Wins)。两台设备交替使用，几乎不会冲突。
+文件锁 (`.clipsync.lock`) 防止多设备同时写入。锁超过 120 秒自动过期。
 
 ## 待完成
 
-- [ ] OneDrive 需要替换 `YOUR_CLIENT_ID_HERE` (Azure Portal 注册)
-- [ ] 图片剪切板内容的同步 (当前只同步文本)
 - [ ] FTS5 中文分词优化
 - [ ] Release 构建优化 (图标替换)

@@ -1,4 +1,1 @@
-pub mod engine;
-pub mod onedrive;
-pub mod types;
-pub mod webdav;
+// Sync module removed — database is now stored directly in a synced folder

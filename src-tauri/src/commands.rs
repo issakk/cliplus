@@ -134,6 +134,16 @@ pub fn cleanup_old_records(state: State<'_, AppState>, days: i64) -> Result<u32,
     db.cleanup_deleted(days)
 }
 
+// ===== 剪切板控制 =====
+
+/// 设置 suppress 标志，下次剪切板变化时跳过监听（用于程序自身写剪切板）
+#[tauri::command]
+pub fn suppress_next_clip(state: State<'_, AppState>) {
+    state
+        .suppress_clip
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 // ===== 快捷键管理 =====
 
 /// 注册快捷键（供 lib.rs 启动时和 register_hotkey 命令共用）
@@ -142,7 +152,7 @@ pub fn register_hotkey_inner(app: &tauri::AppHandle, hotkey: &str) -> Result<(),
         GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
     };
 
-    // 先注销旧的
+    // 注销旧快捷键
     let _ = app.global_shortcut().unregister_all();
 
     // 解析快捷键字符串，如 "Ctrl+Shift+V"
@@ -344,4 +354,65 @@ pub fn set_db_path(state: State<'_, AppState>, path: String) -> Result<String, S
     std::fs::write(&lock_file, format!("{}:{}", device, pid)).ok();
 
     Ok(new_db_path.to_string_lossy().to_string())
+}
+
+/// 隐藏窗口 → 等焦点转移 → 模拟 Ctrl+V 粘贴到上一个活动窗口
+#[tauri::command]
+pub fn paste_to_active_window(app: tauri::AppHandle) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+
+    // 1. 隐藏 ClipSync 窗口
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+
+    // 2. 等待焦点转移到上一个窗口
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // 3. 模拟 Ctrl+V
+    unsafe {
+        let inputs = [
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_CONTROL,
+                        ..Default::default()
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_V,
+                        ..Default::default()
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_V,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        ..Default::default()
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_CONTROL,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        ..Default::default()
+                    },
+                },
+            },
+        ];
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+
+    Ok(())
 }

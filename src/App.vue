@@ -21,7 +21,7 @@ const theme = ref<"dark" | "light">("dark");
 // 剪切板状态
 const clips = ref<Clip[]>([]);
 const searchQuery = ref("");
-const selectedIndex = ref(0);
+const selectedIds = ref<Set<string>>(new Set());
 
 async function loadClips() {
   clips.value = await invoke("get_clips", {
@@ -30,12 +30,56 @@ async function loadClips() {
   });
 }
 
-async function selectClip(clip: Clip) {
+// 单击：选中该项（Ctrl+点击可多选）
+function onClickClip(clip: Clip, e: MouseEvent) {
+  if (e.ctrlKey || e.metaKey) {
+    // Ctrl+点击：切换选中状态
+    const s = new Set(selectedIds.value);
+    if (s.has(clip.id)) {
+      s.delete(clip.id);
+    } else {
+      s.add(clip.id);
+    }
+    selectedIds.value = s;
+  } else {
+    // 普通点击：仅选中当前项
+    selectedIds.value = new Set([clip.id]);
+  }
+}
+
+// 双击：复制并粘贴到上一个活动窗口
+async function onDoubleClickClip(clip: Clip) {
   await invoke("copy_clip", { id: clip.id });
+  // 后端处理：隐藏窗口 → 等焦点转移 → Ctrl+V
+  await invoke("paste_to_active_window");
+}
+
+// 复制选中项到剪切板（多选时合并文本）
+async function copySelected() {
+  const ids = selectedIds.value;
+  if (ids.size === 0) return;
+
+  if (ids.size === 1) {
+    const id = [...ids][0];
+    await invoke("copy_clip", { id });
+  } else {
+    // 多选：按选中顺序拼接文本
+    const texts = clips.value
+      .filter((c) => ids.has(c.id) && c.content_text)
+      .map((c) => c.content_text);
+    const merged = texts.join("\n");
+    // 设置 suppress 避免合并文本被插入列表
+    await invoke("suppress_next_clip");
+    const { writeText } = await import(
+      "@tauri-apps/plugin-clipboard-manager"
+    );
+    await writeText(merged);
+  }
 }
 
 async function deleteClip(id: string) {
   await invoke("delete_clip", { id });
+  selectedIds.value.delete(id);
   await loadClips();
 }
 
@@ -60,6 +104,17 @@ function truncate(text: string, max: number = 120) {
 
 function onSearch() {
   loadClips();
+}
+
+// 全局键盘：Ctrl+C 复制选中项
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.ctrlKey && e.key === "c" && selectedIds.value.size > 0) {
+    // 如果焦点在搜索框且有选中文本，不拦截
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    e.preventDefault();
+    copySelected();
+  }
 }
 
 // 主题切换
@@ -89,10 +144,13 @@ onMounted(async () => {
   unlisten = await listen("clipboard-changed", () => {
     if (activeTab.value === "clips") loadClips();
   });
+
+  document.addEventListener("keydown", onGlobalKeydown);
 });
 
 onUnmounted(() => {
   unlisten?.();
+  document.removeEventListener("keydown", onGlobalKeydown);
 });
 </script>
 
@@ -132,17 +190,22 @@ onUnmounted(() => {
         />
       </div>
 
+      <div v-if="selectedIds.size > 1" class="action-bar">
+        <span class="action-count">已选 {{ selectedIds.size }} 项</span>
+        <button class="btn-action" @click="copySelected">📋 复制</button>
+      </div>
+
       <div class="clip-list">
         <div
-          v-for="(clip, index) in clips"
+          v-for="clip in clips"
           :key="clip.id"
           class="clip-item"
           :class="{
             pinned: clip.is_pinned,
-            selected: index === selectedIndex,
+            selected: selectedIds.has(clip.id),
           }"
-          @click="selectClip(clip)"
-          @mouseenter="selectedIndex = index"
+          @click="onClickClip(clip, $event)"
+          @dblclick="onDoubleClickClip(clip)"
         >
           <div class="clip-content">
             <span v-if="clip.content_type === 'text'" class="clip-text">
@@ -383,5 +446,37 @@ body {
   padding: 40px 20px;
   color: var(--text-dim);
   font-size: 14px;
+}
+
+/* ===== 多选操作栏 ===== */
+.action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.action-count {
+  font-size: 12px;
+}
+
+.btn-action {
+  padding: 4px 12px;
+  background: var(--bg);
+  color: var(--accent);
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-action:hover {
+  opacity: 0.85;
 }
 </style>

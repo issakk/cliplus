@@ -121,6 +121,15 @@ fn handle_clipboard_update() {
         // 写入数据库并通知前端
         if let Some(app) = get_app_handle() {
             let state = app.state::<crate::AppState>();
+
+            // 如果是程序自身写的剪切板，跳过
+            if state
+                .suppress_clip
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
+                return;
+            }
+
             let db = state.db.lock().unwrap();
             if let Ok(id) = db.insert_clip(Some(&text), None, None, None, "text", None) {
                 log::debug!("新剪切板条目: {}", id);

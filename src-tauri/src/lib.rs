@@ -14,6 +14,8 @@ pub struct AppState {
     pub db: Mutex<db::Database>,
     /// 数据库文件所在目录（用于 lock 文件）
     pub db_dir: PathBuf,
+    /// 自身写剪切板时跳过监听，避免循环插入
+    pub suppress_clip: std::sync::atomic::AtomicBool,
 }
 
 /// 配置文件路径（存储数据库路径）
@@ -119,6 +121,7 @@ pub fn run() {
             app.manage(AppState {
                 db: Mutex::new(database),
                 db_dir,
+                suppress_clip: std::sync::atomic::AtomicBool::new(false),
             });
 
             // 隐藏窗口在任务栏的图标（仅通过托盘操作）
@@ -167,6 +170,8 @@ pub fn run() {
             commands::get_db_path,
             commands::set_db_path,
             commands::register_hotkey,
+            commands::paste_to_active_window,
+            commands::suppress_next_clip,
         ])
         .build(tauri::generate_context!())
         .expect("运行 Tauri 应用失败")

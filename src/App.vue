@@ -199,6 +199,11 @@ function switchTab(tab: Tab) {
   if (tab === "clips") loadClips();
 }
 
+async function hideWindow() {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  getCurrentWindow().hide();
+}
+
 let unlisten: (() => void) | null = null;
 
 onMounted(async () => {
@@ -225,8 +230,9 @@ onUnmounted(() => {
 
 <template>
   <div class="app">
-    <!-- 标签页导航（可拖拽移动窗口） -->
-    <nav class="tabs" data-tauri-drag-region>
+    <!-- 标签页导航 -->
+    <nav class="tabs">
+      <div class="drag-region" data-tauri-drag-region></div>
       <button
         :class="{ active: activeTab === 'clips' }"
         @click="switchTab('clips')"
@@ -244,6 +250,9 @@ onUnmounted(() => {
         @click="switchTab('settings')"
       >
         ⚙️ 设置
+      </button>
+      <button class="btn-close" @click="hideWindow" title="关闭（最小化到托盘）">
+        ✕
       </button>
     </nav>
 
@@ -398,6 +407,12 @@ body {
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-shrink: 0;
+  align-items: center;
+}
+
+.drag-region {
+  width: 12px;
+  flex-shrink: 0;
 }
 
 .tabs button {
@@ -420,6 +435,19 @@ body {
 .tabs button.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+.btn-close {
+  flex: none !important;
+  width: 36px;
+  font-size: 14px;
+  border-left: 1px solid var(--border) !important;
+  border-bottom: none !important;
+}
+
+.btn-close:hover {
+  color: var(--red) !important;
+  background: var(--bg-secondary) !important;
 }
 
 /* ===== 搜索栏 ===== */

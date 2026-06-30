@@ -230,9 +230,8 @@ onUnmounted(() => {
 
 <template>
   <div class="app">
-    <!-- 标签页导航 -->
-    <nav class="tabs">
-      <div class="drag-region" data-tauri-drag-region></div>
+    <!-- 标签页导航（整个区域可拖拽移动窗口） -->
+    <nav class="tabs" data-tauri-drag-region>
       <button
         :class="{ active: activeTab === 'clips' }"
         @click="switchTab('clips')"
@@ -408,11 +407,6 @@ body {
   background: var(--bg-secondary);
   flex-shrink: 0;
   align-items: center;
-}
-
-.drag-region {
-  width: 12px;
-  flex-shrink: 0;
 }
 
 .tabs button {

@@ -67,7 +67,9 @@ pub fn toggle_pin(state: State<'_, AppState>, id: String) -> Result<(), String> 
 #[tauri::command]
 pub fn toggle_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        if window.is_visible().unwrap_or(false) {
+        let visible = window.is_visible().unwrap_or(false);
+        let focused = window.is_focused().unwrap_or(false);
+        if visible && focused {
             window.hide().map_err(|e| e.to_string())?;
         } else {
             window.set_skip_taskbar(true).ok();
@@ -184,9 +186,13 @@ pub fn register_hotkey_inner(app: &tauri::AppHandle, hotkey: &str) -> Result<(),
         .on_shortcut(shortcut, move |_app, _sc, event| {
             if event.state() == ShortcutState::Pressed {
                 if let Some(window) = app_handle.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) {
+                    let visible = window.is_visible().unwrap_or(false);
+                    let focused = window.is_focused().unwrap_or(false);
+                    if visible && focused {
+                        // 窗口可见且有焦点 → 隐藏
                         let _ = window.hide();
                     } else {
+                        // 窗口隐藏，或可见但无焦点 → 置顶并聚焦
                         let _ = window.set_skip_taskbar(true);
                         let _ = window.show();
                         let _ = window.set_focus();

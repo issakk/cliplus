@@ -24,6 +24,9 @@ const searchQuery = ref("");
 const selectedIds = ref<Set<string>>(new Set());
 const lastSelectedId = ref<string | null>(null); // Shift 范围选择锚点
 
+// 右键菜单状态
+const contextMenu = ref<{ x: number; y: number; clip: Clip } | null>(null);
+
 async function loadClips() {
   clips.value = await invoke("get_clips", {
     query: searchQuery.value || null,
@@ -68,6 +71,51 @@ async function onDoubleClickClip(clip: Clip) {
   await invoke("copy_clip", { id: clip.id });
   // 后端处理：隐藏窗口 → 等焦点转移 → Ctrl+V
   await invoke("paste_to_active_window");
+}
+
+// 右键菜单
+function onContextMenu(clip: Clip, e: MouseEvent) {
+  e.preventDefault();
+  // 如果右键的项不在选中范围内，单独选中它
+  if (!selectedIds.value.has(clip.id)) {
+    selectedIds.value = new Set([clip.id]);
+    lastSelectedId.value = clip.id;
+  }
+  contextMenu.value = { x: e.clientX, y: e.clientY, clip };
+}
+
+function closeContextMenu() {
+  contextMenu.value = null;
+}
+
+async function ctxCopy() {
+  if (!contextMenu.value) return;
+  await copySelected();
+  closeContextMenu();
+}
+
+async function ctxPaste() {
+  if (!contextMenu.value) return;
+  await onDoubleClickClip(contextMenu.value.clip);
+  closeContextMenu();
+}
+
+async function ctxTogglePin() {
+  if (!contextMenu.value) return;
+  await togglePin(contextMenu.value.clip.id);
+  closeContextMenu();
+}
+
+async function ctxDelete() {
+  if (!contextMenu.value) return;
+  // 多选时批量删除
+  const ids = selectedIds.value.has(contextMenu.value.clip.id)
+    ? [...selectedIds.value]
+    : [contextMenu.value.clip.id];
+  for (const id of ids) {
+    await deleteClip(id);
+  }
+  closeContextMenu();
 }
 
 // 复制选中项到剪切板（多选时合并文本）
@@ -124,6 +172,10 @@ function onSearch() {
 
 // 全局键盘：Ctrl+C 复制选中项
 function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    closeContextMenu();
+    return;
+  }
   if (e.ctrlKey && e.key === "c" && selectedIds.value.size > 0) {
     // 如果焦点在搜索框且有选中文本，不拦截
     const tag = (e.target as HTMLElement)?.tagName;
@@ -222,6 +274,7 @@ onUnmounted(() => {
           }"
           @click="onClickClip(clip, $event)"
           @dblclick="onDoubleClickClip(clip)"
+          @contextmenu="onContextMenu(clip, $event)"
         >
           <div class="clip-content">
             <span v-if="clip.content_type === 'text'" class="clip-text">
@@ -259,6 +312,23 @@ onUnmounted(() => {
         <div v-if="clips.length === 0" class="empty">
           {{ searchQuery ? "没有匹配的剪切板" : "暂无剪切板记录" }}
         </div>
+      </div>
+
+      <!-- 右键菜单遮罩 -->
+      <div v-if="contextMenu" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="closeContextMenu"></div>
+      <!-- 右键菜单 -->
+      <div
+        v-if="contextMenu"
+        class="context-menu"
+        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+      >
+        <div class="ctx-item" @click="ctxCopy">📋 复制</div>
+        <div class="ctx-item" @click="ctxPaste">📌 复制并粘贴</div>
+        <div class="ctx-item" @click="ctxTogglePin">
+          {{ contextMenu.clip.is_pinned ? "📍 取消置顶" : "📌 置顶" }}
+        </div>
+        <div class="ctx-sep"></div>
+        <div class="ctx-item ctx-danger" @click="ctxDelete">🗑️ 删除</div>
       </div>
     </template>
 
@@ -494,5 +564,45 @@ body {
 
 .btn-action:hover {
   opacity: 0.85;
+}
+
+/* 右键菜单 */
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.ctx-item {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ctx-item:hover {
+  background: var(--surface);
+}
+
+.ctx-danger {
+  color: var(--red);
+}
+
+.ctx-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
 }
 </style>

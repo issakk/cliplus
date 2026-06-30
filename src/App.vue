@@ -22,6 +22,7 @@ const theme = ref<"dark" | "light">("dark");
 const clips = ref<Clip[]>([]);
 const searchQuery = ref("");
 const selectedIds = ref<Set<string>>(new Set());
+const lastSelectedId = ref<string | null>(null); // Shift 范围选择锚点
 
 async function loadClips() {
   clips.value = await invoke("get_clips", {
@@ -30,9 +31,22 @@ async function loadClips() {
   });
 }
 
-// 单击：选中该项（Ctrl+点击可多选）
+// 单击：选中该项（Ctrl 切换多选 / Shift 范围多选）
 function onClickClip(clip: Clip, e: MouseEvent) {
-  if (e.ctrlKey || e.metaKey) {
+  if (e.shiftKey && lastSelectedId.value) {
+    // Shift+点击：从锚点到当前项的范围选择
+    const ids = clips.value.map((c) => c.id);
+    const anchorIdx = ids.indexOf(lastSelectedId.value);
+    const currentIdx = ids.indexOf(clip.id);
+    if (anchorIdx !== -1 && currentIdx !== -1) {
+      const [start, end] =
+        anchorIdx <= currentIdx
+          ? [anchorIdx, currentIdx]
+          : [currentIdx, anchorIdx];
+      const rangeIds = ids.slice(start, end + 1);
+      selectedIds.value = new Set(rangeIds);
+    }
+  } else if (e.ctrlKey || e.metaKey) {
     // Ctrl+点击：切换选中状态
     const s = new Set(selectedIds.value);
     if (s.has(clip.id)) {
@@ -41,9 +55,11 @@ function onClickClip(clip: Clip, e: MouseEvent) {
       s.add(clip.id);
     }
     selectedIds.value = s;
+    lastSelectedId.value = clip.id;
   } else {
     // 普通点击：仅选中当前项
     selectedIds.value = new Set([clip.id]);
+    lastSelectedId.value = clip.id;
   }
 }
 

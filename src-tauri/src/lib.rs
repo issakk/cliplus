@@ -127,6 +127,15 @@ pub fn run() {
             // 隐藏窗口在任务栏的图标（仅通过托盘操作）
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_skip_taskbar(true);
+
+                // 关闭时隐藏到托盘，不退出
+                let window_clone = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window_clone.hide();
+                    }
+                });
             }
 
             // 从数据库读取快捷键并注册

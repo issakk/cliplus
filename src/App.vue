@@ -214,6 +214,7 @@ onMounted(async () => {
   });
 
   document.addEventListener("keydown", onGlobalKeydown);
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
 });
 
 onUnmounted(() => {

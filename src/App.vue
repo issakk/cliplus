@@ -225,8 +225,8 @@ onUnmounted(() => {
 
 <template>
   <div class="app">
-    <!-- 标签页导航 -->
-    <nav class="tabs">
+    <!-- 标签页导航（可拖拽移动窗口） -->
+    <nav class="tabs" data-tauri-drag-region>
       <button
         :class="{ active: activeTab === 'clips' }"
         @click="switchTab('clips')"

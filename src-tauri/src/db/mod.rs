@@ -1,6 +1,7 @@
 pub mod clips;
 pub mod settings;
 pub mod snippets;
+pub mod sync;
 
 use chrono::Utc;
 use rusqlite::{params, Connection};
@@ -115,8 +116,9 @@ impl Database {
                         INSERT INTO clips_fts(clips_fts, rowid, content_text)
                         VALUES('delete', old.rowid, old.content_text);
                     END;
-
-                    CREATE TRIGGER clips_fts_update AFTER UPDATE ON clips BEGIN
+                    CREATE TRIGGER clips_fts_update AFTER UPDATE ON clips
+                    WHEN old.content_text IS NOT new.content_text
+                    BEGIN
                         INSERT INTO clips_fts(clips_fts, rowid, content_text)
                         VALUES('delete', old.rowid, old.content_text);
                         INSERT INTO clips_fts(rowid, content_text) VALUES (new.rowid, new.content_text);

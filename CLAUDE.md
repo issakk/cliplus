@@ -15,16 +15,16 @@ Windows 剪切板管理器 + OneDrive/WebDAV 多设备同步。
 ```
 src-tauri/src/
 ├── main.rs          # 入口, 调用 lib::run()
-├── lib.rs           # Tauri Builder, 插件注册, 命令注册, 文件锁
+├── lib.rs           # Tauri Builder, 插件注册, 命令注册, 文件锁, 启动合并/退出导出
 ├── commands.rs      # 所有 #[tauri::command] 函数
 ├── clipboard/mod.rs # Windows 剪切板监听 (AddClipboardFormatListener)
 ├── tray.rs          # 系统托盘
 ├── db/
 │   ├── mod.rs       # Database 结构体, 迁移, FTS5, cleanup_deleted
-│   ├── clips.rs     # Clips CRUD
+│   ├── clips.rs     # Clips CRUD (含 device_id, 去重)
 │   ├── snippets.rs  # Snippets CRUD
-│   └── settings.rs  # Settings (get_setting/set_setting, 复用 sync_meta 表)
-└── sync/            # (已清空, 同步改为数据库直接放同步盘)
+│   ├── settings.rs  # Settings (get_setting/set_setting, 复用 sync_meta 表)
+│   └── sync.rs      # 同步引擎: merge_from (LWW) + export_to + sync_with
 
 src/
 ├── main.ts          # Vue 入口
@@ -65,7 +65,7 @@ npm run tauri dev        # Tauri dev (自动启动 Vite + Rust 编译)
 - **Tauri 命令**: 在 `commands.rs` 定义, 在 `lib.rs` 的 `generate_handler![]` 注册
 - **前端调用**: `invoke("command_name", { param })` (camelCase 参数名)
 - **CSS 变量**: 使用 `--bg`, `--text`, `--accent` 等全局变量, 支持深色/浅色主题
-- **同步**: sync engine 函数是 `impl Database` 的关联函数, 非 `&self` 方法
+- **同步**: `db::sync` 模块的 `merge_from`/`export_to`/`sync_with` 是 `impl Database` 的 `&self` 方法
 
 ## 数据库表
 
@@ -76,17 +76,23 @@ npm run tauri dev        # Tauri dev (自动启动 Vite + Rust 编译)
 
 ## 同步架构
 
-数据库直接放到同步盘目录（OneDrive / Dropbox / Google Drive 等），由客户端自动同步文件。
+本地库 + 镜像库 + LWW 合并。每台设备持有一份本地工作库（app_data/clipsync.db，开 WAL），
+用户可选一个云同步盘目录，其中存放镜像库 clipsync.db。
 
 ```
-用户在设置页选择同步盘目录 → 数据库文件迁移到该目录
-                ↓
-OneDrive/Dropbox 客户端自动同步 clipsync.db
-                ↓
-其他设备启动时读取 db_path.txt 打开同一个数据库
+启动: 本地库 merge_from(镜像)  ← 把镜像里 updated_at 更新的行并入本地
+              ↓
+正常使用本地库（剪切板监听、增删改都写本地）
+              ↓
+退出/手动同步: 本地库 sync_with(镜像) = merge_from + export_to
+              export_to: checkpoint(TRUNCATE) → 整文件覆盖镜像 → 删除镜像 -wal/-shm
 ```
 
-文件锁 (`.clipsync.lock`) 防止多设备同时写入。锁超过 120 秒自动过期。
+- **LWW (Last-Writer-Wins)**: 按 `updated_at` 取大者，软删除以 `is_deleted=1` 传播
+- **device_id**: 每条 clip 记录来源设备名 (COMPUTERNAME)，便于排查
+- **不直接操作云盘上的 db**：本地库始终在 app_data，避免 WAL 文件在云盘上的同步时序问题
+- 文件锁 (`.clipsync.lock`) 防本机多实例，120 秒过期
+- 配置: `app_data/sync_dir.txt` 存同步盘目录路径；`get_sync_dir`/`set_sync_dir`/`sync_now` 命令
 
 ## 待完成
 

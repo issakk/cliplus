@@ -37,21 +37,22 @@ impl Database {
         content_image: Option<&[u8]>,
         content_type: &str,
         source_app: Option<&str>,
+        device_id: &str,
     ) -> Result<String, String> {
         let uuid = Uuid::now_v7();
         let id_bytes = uuid.as_bytes().to_vec();
         let now = chrono::Utc::now().timestamp_millis();
 
-        // 去重：检查最近一条是否内容相同
+        // 去重：检查最近一条是否内容相同（只看最新一行，避免全表 COUNT）
         if let Some(text) = content_text {
             let dup: bool = self
                 .conn
                 .query_row(
-                    "SELECT COUNT(*) > 0 FROM clips
+                    "SELECT 1 FROM clips
                      WHERE content_text = ?1 AND content_type = 'text' AND is_deleted = 0
                      ORDER BY id DESC LIMIT 1",
                     [text],
-                    |row| row.get(0),
+                    |_| Ok(true),
                 )
                 .unwrap_or(false);
             if dup {
@@ -62,7 +63,7 @@ impl Database {
         self.conn
             .execute(
                 "INSERT INTO clips (id, content_text, content_rtf, content_html, content_image, content_type, source_app, device_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '', ?8, ?8)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
                 params![
                     id_bytes,
                     content_text,
@@ -71,6 +72,7 @@ impl Database {
                     content_image,
                     content_type,
                     source_app,
+                    device_id,
                     now,
                 ],
             )
@@ -168,6 +170,21 @@ impl Database {
             )
             .map_err(|e| e.to_string())?;
 
+        Ok(())
+    }
+
+    /// 编辑剪切板条目的文本内容
+    pub fn update_clip_text(&self, id: &str, new_text: &str) -> Result<(), String> {
+        let uuid = Uuid::parse_str(id).map_err(|e| e.to_string())?;
+        let id_bytes = uuid.as_bytes().to_vec();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        self.conn
+            .execute(
+                "UPDATE clips SET content_text = ?1, updated_at = ?2, version = version + 1 WHERE id = ?3",
+                params![new_text, now, id_bytes],
+            )
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 }

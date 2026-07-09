@@ -11,8 +11,8 @@ const autoStart = ref(false);
 const cleanupMessage = ref("");
 const isListeningHotkey = ref(false);
 
-// 数据库路径
-const dbPath = ref("");
+// 同步盘目录
+const syncDir = ref("");
 
 async function loadSettings() {
   const h = await invoke<string | null>("get_setting", { key: "hotkey" });
@@ -22,7 +22,7 @@ async function loadSettings() {
   autoStart.value = a === "true";
 
   try {
-    dbPath.value = await invoke<string>("get_db_path");
+    syncDir.value = await invoke<string>("get_sync_dir") || "";
   } catch {}
 }
 
@@ -77,20 +77,30 @@ async function onThemeChange(t: "dark" | "light") {
   emit("update:theme", t);
 }
 
-async function chooseDbPath() {
+async function chooseSyncDir() {
   const selected = await open({
     directory: true,
     multiple: false,
-    title: "选择数据库存放目录",
+    title: "选择同步盘目录（如 OneDrive / Dropbox）",
   });
   if (!selected) return;
 
   try {
-    const newPath = await invoke<string>("set_db_path", { path: selected });
-    dbPath.value = newPath;
-    cleanupMessage.value = "数据库已迁移到: " + newPath;
+    const newPath = await invoke<string>("set_sync_dir", { path: selected });
+    syncDir.value = newPath;
+    cleanupMessage.value = "已设置同步目录并完成首次同步: " + newPath;
   } catch (e: any) {
-    cleanupMessage.value = "迁移失败: " + e;
+    cleanupMessage.value = "设置失败: " + e;
+  }
+  setTimeout(() => (cleanupMessage.value = ""), 5000);
+}
+
+async function syncNow() {
+  try {
+    const msg = await invoke<string>("sync_now");
+    cleanupMessage.value = msg;
+  } catch (e: any) {
+    cleanupMessage.value = "同步失败: " + e;
   }
   setTimeout(() => (cleanupMessage.value = ""), 5000);
 }
@@ -182,15 +192,16 @@ onMounted(() => {
       <!-- 分隔线 -->
       <div class="setting-divider"></div>
 
-      <!-- 数据库位置 -->
+      <!-- 同步目录 -->
       <div class="setting-item" style="flex-direction: column; align-items: stretch;">
         <div class="setting-label" style="margin-bottom: 8px;">
-          <span class="label-text">数据库位置</span>
-          <span class="label-desc">选择同步盘目录（如 OneDrive）实现多设备同步</span>
+          <span class="label-text">同步目录</span>
+          <span class="label-desc">选择同步盘目录（如 OneDrive / Dropbox），数据库镜像将存放在此目录实现多设备同步</span>
         </div>
         <div class="db-path-row">
-          <span class="db-path-text" :title="dbPath">{{ dbPath }}</span>
-          <button class="btn-primary" @click="chooseDbPath">更改位置</button>
+          <span class="db-path-text" :title="syncDir">{{ syncDir || "未设置（仅本地）" }}</span>
+          <button class="btn-primary" @click="chooseSyncDir">更改目录</button>
+          <button v-if="syncDir" class="btn-secondary" @click="syncNow">立即同步</button>
         </div>
       </div>
 
@@ -457,5 +468,23 @@ onMounted(() => {
 .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 次要按钮 */
+.btn-secondary {
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.btn-secondary:hover {
+  opacity: 0.7;
 }
 </style>

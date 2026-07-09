@@ -17,8 +17,7 @@
 | 前端框架 | Vue 3 | 3.x | 生态成熟、Tauri 官方模板支持、组合式 API 灵活 |
 | 构建工具 | Vite | 6.x | 快速 HMR、Tauri 默认集成 |
 | 数据库 | SQLite (rusqlite) | — | 单文件、可靠、零部署 |
-| HTTP 客户端 | reqwest | — | OneDrive Graph API / WebDAV 请求 |
-| 异步运行时 | tokio | — | Tauri 2.0 默认运行时 |
+| 同步 | 本地库+镜像库 LWW | — | 行级合并，依赖云盘文件同步，无需 HTTP 客户端 |
 | ID 生成 | uuid v7 | RFC 9562 | 时间有序、去中心化、无需协调设备号 |
 
 **内存预估：** WebView2 ~30MB + Rust 进程 ~5MB ≈ **35MB**
@@ -48,10 +47,9 @@
 - 一键插入到当前焦点窗口
 
 ### 3.5 同步
-- 支持 OneDrive（Microsoft Graph API）和 WebDAV 两种后端
-- JSON-lines 变更日志格式
-- LWW (Last-Writer-Wins) 合并策略
-- 触发时机：启动时、退出时、手动触发、可选定时（5 分钟）
+- 本地库 + 镜像库 + LWW 行级合并（详见 §5）
+- 用户指定同步盘目录（OneDrive / Dropbox / Google Drive 等任意文件同步服务）
+- 触发时机：启动时合并、退出时导出、手动触发
 
 ### 3.6 系统托盘
 - 最小化到托盘，后台常驻
@@ -157,74 +155,56 @@ END;
 
 ## 5. 同步方案
 
-### 5.1 架构
+### 5.1 架构：本地库 + 镜像库 + LWW 合并
+
+每台设备持有一份**本地工作库**（`app_data/clipsync.db`，开 WAL，可靠）。
+用户可选一个云同步盘目录（OneDrive / Dropbox / Google Drive 等），其中存放**镜像库** `clipsync.db`。
+设备不直接操作云盘上的数据库，而是通过启动合并 + 退出导出与镜像交换数据。
 
 ```
-┌─────────────┐     ┌─────────────┐
-│   设备 A    │     │   设备 B    │
-│  SQLite DB  │     │  SQLite DB  │
-└──────┬──────┘     └──────┬──────┘
-       │                    │
-       │  export/import     │
-       ▼                    ▼
-┌──────────────────────────────────┐
-│         云存储 (OneDrive / WebDAV)        │
-│         clipsync/sync.jsonl              │
-└──────────────────────────────────┘
+┌─────────────┐                     ┌─────────────┐
+│   设备 A    │                     │   设备 B    │
+│  本地库     │                     │  本地库     │
+│  (app_data) │                     │  (app_data) │
+└──────┬──────┘                     └──────┬──────┘
+       │ merge_from / export_to            │ merge_from / export_to
+       ▼                                   ▼
+┌──────────────────────────────────────────────────┐
+│     云同步盘目录 (OneDrive / Dropbox / …)         │
+│     clipsync.db  (镜像库，普通文件，无 WAL)        │
+└──────────────────────────────────────────────────┘
 ```
 
-### 5.2 同步文件格式
+### 5.2 同步时机
 
-`sync.jsonl` — 每行一条变更记录：
+- **启动时**：`merge_from(镜像)` — 把镜像里 `updated_at` 更新的行并入本地库
+- **退出时**：`sync_with(镜像)` = `merge_from` + `export_to`
+  - `export_to`：先防御性合并 → `PRAGMA wal_checkpoint(TRUNCATE)` → 整文件覆盖镜像 → 删除镜像的 `-wal`/`-shm`
+- **手动同步**：设置页"立即同步"按钮 → `sync_now` 命令
 
-```jsonl
-{"op":"upsert","id":"AQID...base64...","data":{...},"ts":1719500000000,"device":"书房电脑"}
-{"op":"delete","id":"AQID...base64...","ts":1719500001000,"device":"书房电脑"}
-{"op":"upsert","id":"AQID...base64...","data":{...},"ts":1719500002000,"device":"笔记本"}
-```
+### 5.3 合并算法（LWW）
 
-- `op`: `upsert`（插入或更新）或 `delete`（软删除）
-- `id`: UUIDv7 的 Base64 编码
-- `data`: 完整 clip 数据（不含图片 BLOB，图片单独同步）
-- `ts`: 操作时间戳
-- `device`: 设备友好名称
-
-**图片同步：** 图片不放在 jsonl 里，单独以 `clipsync/images/{uuid}.png` 存储在云盘。
-
-### 5.3 合并算法
+行级 Last-Writer-Wins，跨库用 SQLite `ATTACH` + `INSERT ... ON CONFLICT(id) DO UPDATE ... WHERE excluded.updated_at > clips.updated_at`。
 
 ```
-fn merge(local_db, remote_log):
-    last_sync = local_db.get_meta("last_sync_ts")
-
-    for entry in remote_log where entry.ts > last_sync:
-        local = local_db.get(entry.id)
-
-        match (local, entry.op):
-            (None, "upsert")      → INSERT entry.data
-            (Some, "upsert")      → if entry.ts > local.updated_at → UPDATE
-            (Some, "delete")      → if entry.ts > local.updated_at → SET is_deleted=1
-            (None, "delete")      → SKIP (已经不存在)
-
-    local_db.set_meta("last_sync_ts", now())
+fn merge_from(mirror_path):
+    ATTACH mirror AS remote
+    INSERT INTO clips SELECT * FROM remote.clips
+        ON CONFLICT(id) DO UPDATE SET ... WHERE excluded.updated_at > clips.updated_at
+    INSERT INTO snippets SELECT * FROM remote.snippets
+        ON CONFLICT(id) DO UPDATE SET ... WHERE excluded.updated_at > snippets.updated_at
+    DETACH remote
 ```
 
-**冲突策略：** LWW (Last-Writer-Wins)，`updated_at` 大的胜出。
-对于两台设备交替使用的场景，几乎不会出现真正的冲突。
+- 软删除以 `is_deleted=1` 的行传播（删除操作只更新 `is_deleted` 和 `updated_at`）
+- `sync_meta`（设置项）不参与合并，保持各设备本地
+- **不直接在云盘上开 SQLite**：避免 WAL/SHM 文件同步时序导致的数据不一致
 
-### 5.4 OneDrive 集成
+### 5.4 配置
 
-- **认证：** OAuth 2.0 Device Code Flow（无需内嵌 client secret）
-- **API：** Microsoft Graph API
-  - 文件存储在 `/me/drive/special/approot/clipsync/`
-  - PUT 上传、GET 下载、GET delta 增量查询
-- **Token 管理：** refresh_token 存在本地加密配置中
-
-### 5.5 WebDAV 集成
-
-- 标准 WebDAV（RFC 4918）
-- 支持 Nextcloud / Synology / 坚果云等
-- 配置项：URL + 用户名 + 密码（密码存本地加密配置）
+- 同步盘目录路径存于 `app_data/sync_dir.txt`
+- Tauri 命令：`get_sync_dir` / `set_sync_dir`（设置后立即首次同步）/ `sync_now`
+- `device_id` = `COMPUTERNAME`，写入每条 clip 的 `device_id` 字段，便于排查来源
 
 ## 6. 安全
 
@@ -304,7 +284,7 @@ F:\cliplus\
 - [ ] 全局快捷键 `Ctrl+Shift+V`
 - [ ] 系统托盘 + 后台运行
 - [ ] 前端：ClipList + SearchBar + ClipItem
-- [ ] 点击复制、置顶、删除
+- [x] 点击复制、置顶、删除、编辑（右键菜单编辑文本）
 
 ### Phase 2: 片段 + 设置
 - [ ] SnippetPanel CRUD

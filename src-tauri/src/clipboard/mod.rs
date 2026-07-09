@@ -130,8 +130,10 @@ fn handle_clipboard_update() {
                 return;
             }
 
-            let db = state.db.lock().unwrap();
-            if let Ok(id) = db.insert_clip(Some(&text), None, None, None, "text", None) {
+            let db = state.db.lock();
+            if let Ok(id) =
+                db.insert_clip(Some(&text), None, None, None, "text", None, &state.device_id)
+            {
                 log::debug!("新剪切板条目: {}", id);
                 let _ = app.emit("clipboard-changed", ());
             }

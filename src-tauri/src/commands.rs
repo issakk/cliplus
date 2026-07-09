@@ -12,13 +12,13 @@ pub fn get_clips(
     query: Option<String>,
     limit: Option<i64>,
 ) -> Result<Vec<Clip>, String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.get_clips(query.as_deref(), limit.unwrap_or(200))
 }
 
 #[tauri::command]
 pub fn copy_clip(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     let text = db.get_clip_text(&id)?;
     if let Some(text) = text {
         unsafe {
@@ -54,14 +54,20 @@ pub fn copy_clip(state: State<'_, AppState>, id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn delete_clip(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.delete_clip(&id)
 }
 
 #[tauri::command]
 pub fn toggle_pin(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.toggle_pin(&id)
+}
+
+#[tauri::command]
+pub fn update_clip(state: State<'_, AppState>, id: String, content: String) -> Result<(), String> {
+    let db = state.db.lock();
+    db.update_clip_text(&id, &content)
 }
 
 #[tauri::command]
@@ -85,7 +91,7 @@ pub fn get_snippets(
     state: State<'_, AppState>,
     group_name: Option<String>,
 ) -> Result<Vec<Snippet>, String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.get_snippets(group_name.as_deref())
 }
 
@@ -96,7 +102,7 @@ pub fn create_snippet(
     content: String,
     group_name: Option<String>,
 ) -> Result<String, String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.insert_snippet(&title, &content, group_name.as_deref())
 }
 
@@ -108,31 +114,31 @@ pub fn update_snippet(
     content: String,
     group_name: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.update_snippet(&id, &title, &content, group_name.as_deref())
 }
 
 #[tauri::command]
 pub fn delete_snippet_cmd(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.delete_snippet(&id)
 }
 
 #[tauri::command]
 pub fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.get_setting(&key)
 }
 
 #[tauri::command]
 pub fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.set_setting(&key, &value)
 }
 
 #[tauri::command]
 pub fn cleanup_old_records(state: State<'_, AppState>, days: i64) -> Result<u32, String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.cleanup_deleted(days)
 }
 
@@ -266,100 +272,77 @@ fn parse_key_code(key: &str) -> Result<tauri_plugin_global_shortcut::Code, Strin
     }
 }
 
-// ===== 数据库路径管理 =====
+// ===== 同步目录管理 =====
 
-/// 读取配置文件中的数据库路径
-fn read_db_path_config() -> Result<String, String> {
+/// 读取配置文件中的同步盘目录
+fn read_sync_dir_config() -> Result<Option<String>, String> {
     let app_dir = dirs::data_local_dir()
         .ok_or("无法获取数据目录")?
         .join("clipsync");
-    let cfg_path = app_dir.join("db_path.txt");
+    let cfg_path = app_dir.join("sync_dir.txt");
     if cfg_path.exists() {
         let content = std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?;
-        let trimmed = content.trim().to_string();
+        let trimmed = content.trim();
         if !trimmed.is_empty() {
-            return Ok(trimmed);
+            return Ok(Some(trimmed.to_string()));
         }
     }
-    Ok(app_dir.join("clipsync.db").to_string_lossy().to_string())
+    Ok(None)
 }
 
 #[tauri::command]
-pub fn get_db_path() -> Result<String, String> {
-    read_db_path_config()
+pub fn get_sync_dir() -> Result<Option<String>, String> {
+    read_sync_dir_config()
 }
 
+/// 设置同步盘目录：写入配置、立即合并+导出、更新 AppState.mirror_path
 #[tauri::command]
-pub fn set_db_path(state: State<'_, AppState>, path: String) -> Result<String, String> {
+pub fn set_sync_dir(state: State<'_, AppState>, path: String) -> Result<String, String> {
     let target_dir = PathBuf::from(&path);
-    if !target_dir.exists() {
+    if !target_dir.is_dir() {
         return Err("目标目录不存在".into());
     }
 
-    let new_db_path = target_dir.join("clipsync.db");
+    let mirror_path = target_dir.join("clipsync.db");
 
-    // 如果目标已存在数据库，检查 lock
-    if new_db_path.exists() {
-        let lock_file = target_dir.join(".clipsync.lock");
-        if lock_file.exists() {
-            if let Ok(meta) = std::fs::metadata(&lock_file) {
-                let age = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.elapsed().ok())
-                    .unwrap_or(std::time::Duration::from_secs(999));
-                if age < std::time::Duration::from_secs(120) {
-                    return Err("目标数据库正被其他设备使用，请稍后再试".into());
-                }
-            }
-        }
-    }
-
-    // 获取当前数据库路径
-    let old_db_path = read_db_path_config()?;
-    let old_path = PathBuf::from(&old_db_path);
-
-    // 如果源和目标相同，直接返回
-    if old_path == new_db_path {
-        return Ok(new_db_path.to_string_lossy().to_string());
-    }
-
-    // 复制数据库文件（包括 WAL 和 SHM）
-    if old_path.exists() {
-        std::fs::copy(&old_path, &new_db_path).map_err(|e| format!("复制数据库失败: {}", e))?;
-    }
-    for suffix in &["-wal", "-shm"] {
-        let src = PathBuf::from(format!("{}{}", old_path.display(), suffix));
-        let dst = PathBuf::from(format!("{}{}", new_db_path.display(), suffix));
-        if src.exists() {
-            std::fs::copy(&src, &dst).ok();
-        }
-    }
-
-    // 保存新路径到配置文件
+    // 保存配置
     let app_dir = dirs::data_local_dir()
         .ok_or("无法获取数据目录")?
         .join("clipsync");
     std::fs::write(
-        app_dir.join("db_path.txt"),
-        new_db_path.to_string_lossy().as_bytes(),
+        app_dir.join("sync_dir.txt"),
+        target_dir.to_string_lossy().as_bytes(),
     )
     .map_err(|e| e.to_string())?;
 
-    // 关闭旧连接，打开新连接
+    // 立即同步一次：合并镜像入本地 → 导出本地到镜像
     {
-        let mut db = state.db.lock().unwrap();
-        *db = crate::db::Database::open(&new_db_path)?;
+        let db = state.db.lock();
+        let stats = db.sync_with(&mirror_path)?;
+        log::info!(
+            "设置同步目录后完成同步：clips {} 行，snippets {} 行",
+            stats.clips,
+            stats.snippets
+        );
     }
 
-    // 删除旧 lock，创建新 lock
-    let _ = std::fs::remove_file(state.db_dir.join(".clipsync.lock"));
-    let device = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".into());
-    let pid = std::process::id();
-    let lock_file = target_dir.join(".clipsync.lock");
-    std::fs::write(&lock_file, format!("{}:{}", device, pid)).ok();
+    // 更新 AppState
+    *state.mirror_path.lock() = Some(mirror_path.clone());
 
-    Ok(new_db_path.to_string_lossy().to_string())
+    Ok(mirror_path.to_string_lossy().to_string())
+}
+
+/// 手动触发一次同步（合并 + 导出）
+#[tauri::command]
+pub fn sync_now(state: State<'_, AppState>) -> Result<String, String> {
+    let mp = state.mirror_path.lock().clone();
+    let mirror_path = mp.ok_or("未配置同步目录")?;
+    let db = state.db.lock();
+    let stats = db.sync_with(&mirror_path)?;
+    Ok(format!(
+        "同步完成：合并 clips {} 行，snippets {} 行",
+        stats.clips, stats.snippets
+    ))
 }
 
 /// 隐藏窗口 → 等焦点转移 → 模拟 Ctrl+V 粘贴到上一个活动窗口

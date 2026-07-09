@@ -26,6 +26,10 @@ const lastSelectedId = ref<string | null>(null); // Shift 范围选择锚点
 
 // 右键菜单状态
 const contextMenu = ref<{ x: number; y: number; clip: Clip } | null>(null);
+// 编辑状态
+const editingClip = ref<Clip | null>(null);
+const editingText = ref("");
+
 
 async function loadClips() {
   clips.value = await invoke("get_clips", {
@@ -116,6 +120,34 @@ async function ctxDelete() {
     await deleteClip(id);
   }
   closeContextMenu();
+}
+
+async function ctxEdit() {
+  if (!contextMenu.value) return;
+  if (contextMenu.value.clip.content_type !== "text") {
+    closeContextMenu();
+    return;
+  }
+  editingClip.value = contextMenu.value.clip;
+  // 编辑时加载完整文本（列表里是截断的）
+  editingText.value = contextMenu.value.clip.content_text || "";
+  closeContextMenu();
+}
+
+async function saveEdit() {
+  if (!editingClip.value) return;
+  await invoke("update_clip", {
+    id: editingClip.value.id,
+    content: editingText.value,
+  });
+  editingClip.value = null;
+  editingText.value = "";
+  await loadClips();
+}
+
+function cancelEdit() {
+  editingClip.value = null;
+  editingText.value = "";
 }
 
 // 复制选中项到剪切板（多选时合并文本）
@@ -337,7 +369,33 @@ onUnmounted(() => {
           {{ contextMenu.clip.is_pinned ? "📍 取消置顶" : "📌 置顶" }}
         </div>
         <div class="ctx-sep"></div>
+        <div
+          v-if="contextMenu.clip.content_type === 'text'"
+          class="ctx-item"
+          @click="ctxEdit"
+        >
+          ✏️ 编辑
+        </div>
         <div class="ctx-item ctx-danger" @click="ctxDelete">🗑️ 删除</div>
+      </div>
+
+      <!-- 编辑模态框 -->
+      <div v-if="editingClip" class="edit-overlay" @click.self="cancelEdit">
+        <div class="edit-modal">
+          <div class="edit-header">编辑剪切板内容</div>
+          <textarea
+            v-model="editingText"
+            class="edit-textarea"
+            @keydown.escape="cancelEdit"
+            @keydown.ctrl.enter="saveEdit"
+            @keydown.meta.enter="saveEdit"
+          ></textarea>
+          <div class="edit-actions">
+            <span class="edit-hint">Ctrl+Enter 保存 · Esc 取消</span>
+            <button class="btn-edit-cancel" @click="cancelEdit">取消</button>
+            <button class="btn-edit-save" @click="saveEdit">保存</button>
+          </div>
+        </div>
       </div>
     </template>
 
@@ -627,5 +685,100 @@ body {
   height: 1px;
   background: var(--border);
   margin: 4px 0;
+}
+
+/* ===== 编辑模态框 ===== */
+.edit-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.edit-modal {
+  width: 90%;
+  max-width: 560px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.edit-header {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.edit-textarea {
+  flex: 1;
+  min-height: 160px;
+  margin: 12px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: "Consolas", "Segoe UI", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  user-select: text;
+}
+
+.edit-textarea:focus {
+  border-color: var(--accent);
+}
+
+.edit-actions {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  gap: 8px;
+}
+
+.edit-hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.btn-edit-cancel {
+  padding: 5px 14px;
+  background: var(--surface);
+ color: var(--text);
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-edit-cancel:hover {
+  opacity: 0.85;
+}
+
+.btn-edit-save {
+  padding: 5px 14px;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-edit-save:hover {
+  opacity: 0.9;
 }
 </style>

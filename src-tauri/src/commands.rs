@@ -53,21 +53,36 @@ pub fn copy_clip(state: State<'_, AppState>, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn delete_clip(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub fn delete_clip(app: tauri::AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let db = state.db.lock();
-    db.delete_clip(&id)
+    let r = db.delete_clip(&id);
+    drop(db);
+    if r.is_ok() {
+        crate::sync_scheduler::schedule();
+    }
+    r
 }
 
 #[tauri::command]
-pub fn toggle_pin(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub fn toggle_pin(app: tauri::AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let db = state.db.lock();
-    db.toggle_pin(&id)
+    let r = db.toggle_pin(&id);
+    drop(db);
+    if r.is_ok() {
+        crate::sync_scheduler::schedule();
+    }
+    r
 }
 
 #[tauri::command]
-pub fn update_clip(state: State<'_, AppState>, id: String, content: String) -> Result<(), String> {
+pub fn update_clip(app: tauri::AppHandle, state: State<'_, AppState>, id: String, content: String) -> Result<(), String> {
     let db = state.db.lock();
-    db.update_clip_text(&id, &content)
+    let r = db.update_clip_text(&id, &content);
+    drop(db);
+    if r.is_ok() {
+        crate::sync_scheduler::schedule();
+    }
+    r
 }
 
 #[tauri::command]
@@ -97,17 +112,24 @@ pub fn get_snippets(
 
 #[tauri::command]
 pub fn create_snippet(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     title: String,
     content: String,
     group_name: Option<String>,
 ) -> Result<String, String> {
     let db = state.db.lock();
-    db.insert_snippet(&title, &content, group_name.as_deref())
+    let r = db.insert_snippet(&title, &content, group_name.as_deref());
+    drop(db);
+    if r.is_ok() {
+        crate::sync_scheduler::schedule();
+    }
+    r
 }
 
 #[tauri::command]
 pub fn update_snippet(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
     title: String,
@@ -115,13 +137,23 @@ pub fn update_snippet(
     group_name: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.lock();
-    db.update_snippet(&id, &title, &content, group_name.as_deref())
+    let r = db.update_snippet(&id, &title, &content, group_name.as_deref());
+    drop(db);
+    if r.is_ok() {
+        crate::sync_scheduler::schedule();
+    }
+    r
 }
 
 #[tauri::command]
-pub fn delete_snippet_cmd(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub fn delete_snippet_cmd(app: tauri::AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let db = state.db.lock();
-    db.delete_snippet(&id)
+    let r = db.delete_snippet(&id);
+    drop(db);
+    if r.is_ok() {
+        crate::sync_scheduler::schedule();
+    }
+    r
 }
 
 #[tauri::command]
@@ -131,15 +163,25 @@ pub fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<Str
 }
 
 #[tauri::command]
-pub fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+pub fn set_setting(app: tauri::AppHandle, state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
     let db = state.db.lock();
-    db.set_setting(&key, &value)
+    let r = db.set_setting(&key, &value);
+    drop(db);
+    if r.is_ok() {
+        crate::sync_scheduler::schedule();
+    }
+    r
 }
 
 #[tauri::command]
-pub fn cleanup_old_records(state: State<'_, AppState>, days: i64) -> Result<u32, String> {
+pub fn cleanup_old_records(app: tauri::AppHandle, state: State<'_, AppState>, days: i64) -> Result<u32, String> {
     let db = state.db.lock();
-    db.cleanup_deleted(days)
+    let r = db.cleanup_deleted(days);
+    drop(db);
+    if r.is_ok() {
+        crate::sync_scheduler::schedule();
+    }
+    r
 }
 
 // ===== 剪切板控制 =====

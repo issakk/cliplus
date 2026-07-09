@@ -18,6 +18,7 @@ src-tauri/src/
 ├── lib.rs           # Tauri Builder, 插件注册 (含单实例), 命令注册, 启动合并/退出导出
 ├── commands.rs      # 所有 #[tauri::command] 函数
 ├── clipboard/mod.rs # Windows 剪切板监听 (AddClipboardFormatListener)
+├── sync_scheduler.rs # 防抖同步调度器 (写库后 5s 无新写则自动 export_to)
 ├── tray.rs          # 系统托盘
 ├── db/
 │   ├── mod.rs       # Database 结构体, 迁移, FTS5, cleanup_deleted
@@ -87,6 +88,8 @@ npm run tauri dev        # Tauri dev (自动启动 Vite + Rust 编译)
 启动: 本地库 merge_from(镜像)  ← 把镜像里 updated_at 更新的行并入本地
               ↓
 正常使用本地库（剪切板监听、增删改都写本地）
+              ↓
+写后防抖: 每次写库投递信号 → 5s 内无新写则自动 export_to (防抖合并连续复制)
               ↓
 退出/手动同步: 本地库 sync_with(镜像) = merge_from + export_to
               export_to: checkpoint(TRUNCATE) → 整文件覆盖镜像 → 删除镜像 -wal/-shm

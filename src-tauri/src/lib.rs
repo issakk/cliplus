@@ -1,6 +1,7 @@
 mod clipboard;
 mod commands;
 mod db;
+mod sync_scheduler;
 mod tray;
 
 use std::path::{Path, PathBuf};
@@ -141,6 +142,9 @@ pub fn run() {
             // 启动剪切板监听
             let handle = app.handle().clone();
             clipboard::start_monitor(handle);
+
+            // 启动防抖同步调度器（写库后自动 export_to）
+            sync_scheduler::init(app.handle().clone());
 
             // 创建系统托盘
             tray::create_tray(app)?;

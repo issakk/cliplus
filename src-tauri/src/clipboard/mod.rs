@@ -134,8 +134,10 @@ fn handle_clipboard_update() {
             if let Ok(id) =
                 db.insert_clip(Some(&text), None, None, None, "text", None, &state.device_id)
             {
+                drop(db);
                 log::debug!("新剪切板条目: {}", id);
                 let _ = app.emit("clipboard-changed", ());
+                crate::sync_scheduler::schedule();
             }
         }
     }

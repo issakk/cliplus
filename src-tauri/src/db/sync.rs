@@ -100,9 +100,11 @@ impl Database {
             // 误导性的 "near DO: syntax error"。schema 不兼容时返回明确错误，
             // 避免静默跳过后被 export_to 整文件覆盖而丢失镜像数据。
             let cols: Vec<String> = tx
-                .prepare("PRAGMA table_info(remote.clips)")
+                .prepare(
+                    "SELECT name FROM pragma_table_info('clips', 'remote') ORDER BY cid",
+                )
                 .map_err(|e| e.to_string())?
-                .query_map([], |r| r.get::<_, String>(1))
+                .query_map([], |r| r.get::<_, String>(0))
                 .map_err(|e| e.to_string())?
                 .filter_map(|c| c.ok())
                 .collect();
@@ -122,9 +124,11 @@ impl Database {
             };
 
             let cols_s: Vec<String> = tx
-                .prepare("PRAGMA table_info(remote.snippets)")
+                .prepare(
+                    "SELECT name FROM pragma_table_info('snippets', 'remote') ORDER BY cid",
+                )
                 .map_err(|e| e.to_string())?
-                .query_map([], |r| r.get::<_, String>(1))
+                .query_map([], |r| r.get::<_, String>(0))
                 .map_err(|e| e.to_string())?
                 .filter_map(|c| c.ok())
                 .collect();

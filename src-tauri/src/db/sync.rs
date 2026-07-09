@@ -20,9 +20,10 @@ pub struct MergeStats {
     pub snippets: usize,
 }
 
-/// clips 合并：remote 每行尝试 upsert，仅当 remote.updated_at 严格大于本地时覆盖。
-const CLIPS_MERGE: &str = "
-INSERT INTO clips (
+/// clips 合并第一步：导入 remote 中本地不存在的行。
+/// 用 INSERT OR IGNORE，主键冲突的行跳过（由第二步 UPDATE 处理）。
+const CLIPS_MERGE_INSERT: &str = "
+INSERT OR IGNORE INTO clips (
     id, content_text, content_rtf, content_html, content_image,
     content_type, source_app, is_pinned, is_deleted, device_id,
     created_at, updated_at, version
@@ -31,39 +32,50 @@ SELECT
     id, content_text, content_rtf, content_html, content_image,
     content_type, source_app, is_pinned, is_deleted, device_id,
     created_at, updated_at, version
-FROM remote.clips
-ON CONFLICT(id) DO UPDATE SET
-    content_text  = excluded.content_text,
-    content_rtf   = excluded.content_rtf,
-    content_html  = excluded.content_html,
-    content_image = excluded.content_image,
-    content_type  = excluded.content_type,
-    source_app    = excluded.source_app,
-    is_pinned     = excluded.is_pinned,
-    is_deleted    = excluded.is_deleted,
-    device_id     = excluded.device_id,
-    created_at    = excluded.created_at,
-    updated_at    = excluded.updated_at,
-    version       = excluded.version
-WHERE excluded.updated_at > clips.updated_at;
+FROM remote.clips;
 ";
 
-/// snippets 合并：同上 LWW。
-const SNIPPETS_MERGE: &str = "
-INSERT INTO snippets (
+/// clips 合并第二步：用 remote 中 updated_at 更新的行覆盖本地（LWW）。
+/// 用 UPDATE...FROM join，避免标量子查询在 ATTACH 库上的相关性行为问题。
+const CLIPS_MERGE_UPDATE: &str = "
+UPDATE clips SET
+    content_text  = r.content_text,
+    content_rtf   = r.content_rtf,
+    content_html  = r.content_html,
+    content_image = r.content_image,
+    content_type  = r.content_type,
+    source_app    = r.source_app,
+    is_pinned     = r.is_pinned,
+    is_deleted    = r.is_deleted,
+    device_id     = r.device_id,
+    created_at    = r.created_at,
+    updated_at    = r.updated_at,
+    version       = r.version
+FROM remote.clips AS r
+WHERE clips.id = r.id AND r.updated_at > clips.updated_at;
+";
+
+/// snippets 合并第一步：导入 remote 中本地不存在的行。
+const SNIPPETS_MERGE_INSERT: &str = "
+INSERT OR IGNORE INTO snippets (
     id, title, content, group_name, sort_order, created_at, updated_at
 )
 SELECT
     id, title, content, group_name, sort_order, created_at, updated_at
-FROM remote.snippets
-ON CONFLICT(id) DO UPDATE SET
-    title      = excluded.title,
-    content    = excluded.content,
-    group_name = excluded.group_name,
-    sort_order = excluded.sort_order,
-    created_at = excluded.created_at,
-    updated_at = excluded.updated_at
-WHERE excluded.updated_at > snippets.updated_at;
+FROM remote.snippets;
+";
+
+/// snippets 合并第二步：用 remote 中 updated_at 更新的行覆盖本地（LWW）。
+const SNIPPETS_MERGE_UPDATE: &str = "
+UPDATE snippets SET
+    title      = r.title,
+    content    = r.content,
+    group_name = r.group_name,
+    sort_order = r.sort_order,
+    created_at = r.created_at,
+    updated_at = r.updated_at
+FROM remote.snippets AS r
+WHERE snippets.id = r.id AND r.updated_at > snippets.updated_at;
 ";
 
 impl Database {
@@ -95,10 +107,9 @@ impl Database {
                 .unchecked_transaction()
                 .map_err(|e| e.to_string())?;
 
-            // 探测 remote 库 schema 是否与本地兼容：旧版本镜像库（缺 version 等列、
-            // 或无 PRIMARY KEY）会导致 INSERT...ON CONFLICT 解析失败，SQLite 报出
-            // 误导性的 "near DO: syntax error"。schema 不兼容时返回明确错误，
-            // 避免静默跳过后被 export_to 整文件覆盖而丢失镜像数据。
+            // 探测 remote 库 schema 是否与本地兼容：旧版本镜像库（缺 version 等列）
+            // 会导致两步合并列数不匹配。schema 不兼容时返回明确错误，避免静默
+            // 跳过后被 export_to 整文件覆盖而丢失镜像数据。
             let cols: Vec<String> = tx
                 .prepare(
                     "SELECT name FROM pragma_table_info('clips', 'remote') ORDER BY cid",
@@ -119,8 +130,13 @@ impl Database {
                         return Err(format!("镜像库 clips 表缺少列 `{}`，请删除旧镜像库后重新同步", c));
                     }
                 }
-                tx.execute(CLIPS_MERGE, [])
-                    .map_err(|e| format!("clips 合并失败: {}", e))?
+                let inserted = tx
+                    .execute(CLIPS_MERGE_INSERT, [])
+                    .map_err(|e| format!("clips 合并失败（导入）: {}", e))?;
+                let updated = tx
+                    .execute(CLIPS_MERGE_UPDATE, [])
+                    .map_err(|e| format!("clips 合并失败（更新）: {}", e))?;
+                inserted + updated
             };
 
             let cols_s: Vec<String> = tx
@@ -142,10 +158,14 @@ impl Database {
                         return Err(format!("镜像库 snippets 表缺少列 `{}`，请删除旧镜像库后重新同步", c));
                     }
                 }
-                tx.execute(SNIPPETS_MERGE, [])
-                    .map_err(|e| format!("snippets 合并失败: {}", e))?
+                let inserted = tx
+                    .execute(SNIPPETS_MERGE_INSERT, [])
+                    .map_err(|e| format!("snippets 合并失败（导入）: {}", e))?;
+                let updated = tx
+                    .execute(SNIPPETS_MERGE_UPDATE, [])
+                    .map_err(|e| format!("snippets 合并失败（更新）: {}", e))?;
+                inserted + updated
             };
-
             tx.commit().map_err(|e| e.to_string())?;
             Ok(MergeStats { clips, snippets })
         })();

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use parking_lot::Mutex;
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
 
 /// 同步盘目录配置文件名（存放在 app_data 下，内容为同步盘绝对路径）
 const SYNC_DIR_CFG: &str = "sync_dir.txt";
@@ -62,6 +63,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
             tauri_plugin_dialog::MessageDialogBuilder::new(
+                app.dialog(),
                 "ClipSync",
                 "ClipSync 已在运行中，请勿重复启动。",
             )
@@ -102,7 +104,7 @@ pub fn run() {
                 db: Mutex::new(database),
                 app_data_dir: app_dir.clone(),
                 mirror_path: Mutex::new(mirror_path),
-                device_id: dev,
+                device_id: device_id(),
                 suppress_clip: std::sync::atomic::AtomicBool::new(false),
             });
 

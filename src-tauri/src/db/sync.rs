@@ -94,10 +94,54 @@ impl Database {
                 .conn
                 .unchecked_transaction()
                 .map_err(|e| e.to_string())?;
-            let clips = tx.execute(CLIPS_MERGE, []).map_err(|e| format!("clips 合并失败: {}", e))?;
-            let snippets = tx
-                .execute(SNIPPETS_MERGE, [])
-                .map_err(|e| format!("snippets 合并失败: {}", e))?;
+
+            // 探测 remote 库 schema 是否与本地兼容：旧版本镜像库（缺 version 等列、
+            // 或无 PRIMARY KEY）会导致 INSERT...ON CONFLICT 解析失败，SQLite 报出
+            // 误导性的 "near DO: syntax error"。schema 不兼容时返回明确错误，
+            // 避免静默跳过后被 export_to 整文件覆盖而丢失镜像数据。
+            let cols: Vec<String> = tx
+                .prepare("PRAGMA table_info(remote.clips)")
+                .map_err(|e| e.to_string())?
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| e.to_string())?
+                .filter_map(|c| c.ok())
+                .collect();
+            let need = ["id", "content_text", "content_type", "is_pinned",
+                        "is_deleted", "device_id", "created_at", "updated_at",
+                        "version"];
+            let clips = if cols.is_empty() {
+                0
+            } else {
+                for c in &need {
+                    if !cols.iter().any(|rc| rc == c) {
+                        return Err(format!("镜像库 clips 表缺少列 `{}`，请删除旧镜像库后重新同步", c));
+                    }
+                }
+                tx.execute(CLIPS_MERGE, [])
+                    .map_err(|e| format!("clips 合并失败: {}", e))?
+            };
+
+            let cols_s: Vec<String> = tx
+                .prepare("PRAGMA table_info(remote.snippets)")
+                .map_err(|e| e.to_string())?
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| e.to_string())?
+                .filter_map(|c| c.ok())
+                .collect();
+            let need_s = ["id", "title", "content", "group_name", "sort_order",
+                          "created_at", "updated_at"];
+            let snippets = if cols_s.is_empty() {
+                0
+            } else {
+                for c in &need_s {
+                    if !cols_s.iter().any(|rc| rc == c) {
+                        return Err(format!("镜像库 snippets 表缺少列 `{}`，请删除旧镜像库后重新同步", c));
+                    }
+                }
+                tx.execute(SNIPPETS_MERGE, [])
+                    .map_err(|e| format!("snippets 合并失败: {}", e))?
+            };
+
             tx.commit().map_err(|e| e.to_string())?;
             Ok(MergeStats { clips, snippets })
         })();

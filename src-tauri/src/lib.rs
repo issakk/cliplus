@@ -63,7 +63,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
             tauri_plugin_dialog::MessageDialogBuilder::new(
-                app.dialog(),
+                app.dialog().clone(),
                 "ClipSync",
                 "ClipSync 已在运行中，请勿重复启动。",
             )

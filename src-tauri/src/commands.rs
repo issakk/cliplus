@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::{Manager, State};
 
@@ -271,15 +271,11 @@ fn parse_key_code(key: &str) -> Result<tauri_plugin_global_shortcut::Code, Strin
         _ => Err(format!("不支持的按键: {}", key)),
     }
 }
-
 // ===== 同步目录管理 =====
 
 /// 读取配置文件中的同步盘目录
-fn read_sync_dir_config() -> Result<Option<String>, String> {
-    let app_dir = dirs::data_local_dir()
-        .ok_or("无法获取数据目录")?
-        .join("clipsync");
-    let cfg_path = app_dir.join("sync_dir.txt");
+fn read_sync_dir_config(app_data_dir: &Path) -> Result<Option<String>, String> {
+    let cfg_path = app_data_dir.join("sync_dir.txt");
     if cfg_path.exists() {
         let content = std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?;
         let trimmed = content.trim();
@@ -291,8 +287,8 @@ fn read_sync_dir_config() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub fn get_sync_dir() -> Result<Option<String>, String> {
-    read_sync_dir_config()
+pub fn get_sync_dir(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    read_sync_dir_config(&state.app_data_dir)
 }
 
 /// 设置同步盘目录：写入配置、立即合并+导出、更新 AppState.mirror_path
@@ -305,12 +301,10 @@ pub fn set_sync_dir(state: State<'_, AppState>, path: String) -> Result<String, 
 
     let mirror_path = target_dir.join("clipsync.db");
 
-    // 保存配置
-    let app_dir = dirs::data_local_dir()
-        .ok_or("无法获取数据目录")?
-        .join("clipsync");
+    // 保存配置（与启动时读取的路径保持一致：app_data_dir）
+    std::fs::create_dir_all(&state.app_data_dir).map_err(|e| e.to_string())?;
     std::fs::write(
-        app_dir.join("sync_dir.txt"),
+        state.app_data_dir.join("sync_dir.txt"),
         target_dir.to_string_lossy().as_bytes(),
     )
     .map_err(|e| e.to_string())?;

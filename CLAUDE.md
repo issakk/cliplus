@@ -67,6 +67,10 @@ npm run tauri dev        # Tauri dev (自动启动 Vite + Rust 编译)
 - **CSS 变量**: 使用 `--bg`, `--text`, `--accent` 等全局变量, 支持深色/浅色主题
 - **同步**: `db::sync` 模块的 `merge_from`/`export_to`/`sync_with` 是 `impl Database` 的 `&self` 方法
 
+## 验证约束
+
+- **不要编译**：本仓库改动后不要运行 `cargo build` / `cargo check` / `npm run tauri dev`。改动直接落盘提交，由用户自行构建验证。
+
 ## 数据库表
 
 - `clips` — 剪切板条目 (id BLOB PK, content_text, content_type, is_pinned, is_deleted, updated_at)

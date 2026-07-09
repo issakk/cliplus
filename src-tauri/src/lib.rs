@@ -16,6 +16,8 @@ pub struct AppState {
     pub db: Mutex<db::Database>,
     /// 本地数据库所在目录（app_data），用于 lock 文件
     pub db_dir: PathBuf,
+    /// 应用数据目录（Tauri app_data_dir），存放本地库与同步目录配置
+    pub app_data_dir: PathBuf,
     /// 镜像数据库路径（同步盘目录下的 clipsync.db），None 表示未配置同步
     pub mirror_path: parking_lot::Mutex<Option<PathBuf>>,
     /// 当前设备友好名称（COMPUTERNAME），写入每条 clip 的 device_id
@@ -136,11 +138,10 @@ pub fn run() {
                     Err(e) => log::warn!("启动合并失败: {}", e),
                 }
             }
-
-            let dev = device_id();
             app.manage(AppState {
                 db: Mutex::new(database),
                 db_dir,
+                app_data_dir: app_dir.clone(),
                 mirror_path: Mutex::new(mirror_path),
                 device_id: dev,
                 suppress_clip: std::sync::atomic::AtomicBool::new(false),

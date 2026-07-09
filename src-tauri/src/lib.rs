@@ -14,8 +14,6 @@ const SYNC_DIR_CFG: &str = "sync_dir.txt";
 /// 全局应用状态
 pub struct AppState {
     pub db: Mutex<db::Database>,
-    /// 本地数据库所在目录（app_data），用于 lock 文件
-    pub db_dir: PathBuf,
     /// 应用数据目录（Tauri app_data_dir），存放本地库与同步目录配置
     pub app_data_dir: PathBuf,
     /// 镜像数据库路径（同步盘目录下的 clipsync.db），None 表示未配置同步
@@ -46,51 +44,6 @@ fn read_sync_dir(app_data_dir: &Path) -> Option<PathBuf> {
     }
 }
 
-/// lock 文件路径
-fn lock_path(db_dir: &Path) -> PathBuf {
-    db_dir.join(".clipsync.lock")
-}
-
-/// 创建文件锁（防止本机多实例）
-fn create_lock(db_dir: &Path) -> Result<(), String> {
-    let lp = lock_path(db_dir);
-    let device = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".into());
-    let pid = std::process::id();
-    let content = format!("{}:{}", device, pid);
-    std::fs::write(&lp, content).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// 检查是否有其他实例在使用数据库
-fn check_lock(db_dir: &Path) -> Result<Option<String>, String> {
-    let lp = lock_path(db_dir);
-    if !lp.exists() {
-        return Ok(None);
-    }
-
-    // 检查 lock 文件年龄，超过 120 秒视为过期
-    let meta = std::fs::metadata(&lp).map_err(|e| e.to_string())?;
-    let modified = meta
-        .modified()
-        .map_err(|e| e.to_string())?
-        .elapsed()
-        .unwrap_or(std::time::Duration::from_secs(999));
-
-    if modified > std::time::Duration::from_secs(120) {
-        // 过期，删除
-        std::fs::remove_file(&lp).ok();
-        return Ok(None);
-    }
-
-    let content = std::fs::read_to_string(&lp).unwrap_or_default();
-    Ok(Some(content))
-}
-
-/// 删除文件锁
-fn remove_lock(db_dir: &Path) {
-    let _ = std::fs::remove_file(lock_path(db_dir));
-}
-
 /// 设备友好名称
 fn device_id() -> String {
     std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".into())
@@ -101,6 +54,20 @@ pub fn run() {
     env_logger::init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // 已有实例在运行：弹友好消息框，并把已运行实例的主窗口显示并聚焦
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_skip_taskbar(true);
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            tauri_plugin_dialog::MessageDialogBuilder::new(
+                "ClipSync",
+                "ClipSync 已在运行中，请勿重复启动。",
+            )
+            .kind(tauri_plugin_dialog::MessageDialogKind::Info)
+            .show(|_| {});
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -113,13 +80,6 @@ pub fn run() {
 
             // 本地数据库始终在 app_data 下（可靠、开 WAL）
             let db_path = app_dir.join("clipsync.db");
-            let db_dir = db_path.parent().unwrap_or(&app_dir).to_path_buf();
-
-            // 检查文件锁
-            if let Ok(Some(lock_info)) = check_lock(&db_dir) {
-                log::warn!("数据库可能正被其他实例使用: {}", lock_info);
-            }
-            create_lock(&db_dir).ok();
 
             let database = db::Database::open(&db_path).expect("无法打开数据库");
 
@@ -140,7 +100,6 @@ pub fn run() {
             }
             app.manage(AppState {
                 db: Mutex::new(database),
-                db_dir,
                 app_data_dir: app_dir.clone(),
                 mirror_path: Mutex::new(mirror_path),
                 device_id: dev,
@@ -219,7 +178,6 @@ pub fn run() {
                         log::warn!("退出导出失败: {}", e);
                     }
                 }
-                remove_lock(&state.db_dir);
             }
         });
 }

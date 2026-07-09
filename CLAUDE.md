@@ -15,7 +15,7 @@ Windows 剪切板管理器 + OneDrive/WebDAV 多设备同步。
 ```
 src-tauri/src/
 ├── main.rs          # 入口, 调用 lib::run()
-├── lib.rs           # Tauri Builder, 插件注册, 命令注册, 文件锁, 启动合并/退出导出
+├── lib.rs           # Tauri Builder, 插件注册 (含单实例), 命令注册, 启动合并/退出导出
 ├── commands.rs      # 所有 #[tauri::command] 函数
 ├── clipboard/mod.rs # Windows 剪切板监听 (AddClipboardFormatListener)
 ├── tray.rs          # 系统托盘
@@ -95,7 +95,7 @@ npm run tauri dev        # Tauri dev (自动启动 Vite + Rust 编译)
 - **LWW (Last-Writer-Wins)**: 按 `updated_at` 取大者，软删除以 `is_deleted=1` 传播
 - **device_id**: 每条 clip 记录来源设备名 (COMPUTERNAME)，便于排查
 - **不直接操作云盘上的 db**：本地库始终在 app_data，避免 WAL 文件在云盘上的同步时序问题
-- 文件锁 (`.clipsync.lock`) 防本机多实例，120 秒过期
+- 单实例: `tauri-plugin-single-instance` 插件防本机多实例，二次启动弹消息框并聚焦已运行窗口
 - 配置: `app_data/sync_dir.txt` 存同步盘目录路径；`get_sync_dir`/`set_sync_dir`/`sync_now` 命令
 
 ## 待完成

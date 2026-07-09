@@ -174,7 +174,8 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 let state = app_handle.state::<AppState>();
                 // 退出前导出本地库到镜像
-                if let Some(mp) = state.mirror_path.lock().clone() {
+                let mp = state.mirror_path.lock().clone();
+                if let Some(mp) = mp {
                     let db = state.db.lock();
                     if let Err(e) = db.export_to(&mp) {
                         log::warn!("退出导出失败: {}", e);

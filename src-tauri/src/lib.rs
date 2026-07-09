@@ -3,7 +3,7 @@ mod commands;
 mod db;
 mod tray;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use parking_lot::Mutex;
 use tauri::Manager;

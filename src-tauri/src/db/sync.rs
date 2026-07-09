@@ -132,8 +132,8 @@ impl Database {
 
         // 4. 清除镜像可能残留的 -wal/-shm，云盘客户端对这类临时文件同步行为不一致
         for suffix in &["-wal", "-shm"] {
-            let p = Path::new(&format!("{}{}", mirror_path.display(), suffix));
-            let _ = std::fs::remove_file(p);
+            let p = format!("{}{}", mirror_path.display(), suffix);
+            let _ = std::fs::remove_file(&p);
         }
         Ok(())
     }

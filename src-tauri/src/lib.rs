@@ -25,7 +25,7 @@ pub struct AppState {
 }
 
 /// 同步盘目录配置路径
-fn sync_dir_cfg_path(app_data_dir: &Path) -> Path {
+fn sync_dir_cfg_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(SYNC_DIR_CFG)
 }
 

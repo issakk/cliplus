@@ -449,22 +449,20 @@ pub fn list_system_fonts() -> Result<Vec<String>, String> {
     {
         use std::collections::BTreeSet;
         use windows::Win32::Graphics::Gdi::{
-            EnumFontFamiliesExW, LOGFONTW, NEWTEXTMETRICEXW, FONT_RESOURCE_FILE_HANDLE,
-            GetDC, ReleaseDC,
+            EnumFontFamiliesExW, FONT_CHARSET, LOGFONTW, GetDC, ReleaseDC,
         };
-        use windows::Win32::Foundation::HWND;
+        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 
         let mut fonts: BTreeSet<String> = BTreeSet::new();
-        let fonts_ptr = &mut fonts as *mut BTreeSet<String>;
+        let fonts_ptr = &mut fonts as *mut BTreeSet<String> as isize;
 
-        extern "system" fn callback(
-            _elf: *const LOGFONTW,
-            _ntm: *const NEWTEXTMETRICEXW,
+        unsafe extern "system" fn callback(
+            elf: *const LOGFONTW,
+            _ntm: *const windows::Win32::Graphics::Gdi::TEXTMETRICW,
             _font_type: u32,
-            lparam: usize,
-        ) -> i32 {
-            // 从 LOGFONTW 读取字体名
-            let lf = unsafe { &*_elf };
+            lparam: LPARAM,
+        ) -> BOOL {
+            let lf = &*elf;
             // lfFaceName 是 [u16; 32]，以 null 结尾
             let mut end = 0;
             for i in 0..32 {
@@ -475,11 +473,11 @@ pub fn list_system_fonts() -> Result<Vec<String>, String> {
                 end = i + 1;
             }
             let name = String::from_utf16_lossy(&lf.lfFaceName[..end]);
-            let set = unsafe { &mut *(lparam as *mut BTreeSet<String>) };
+            let set = &mut *(lparam.0 as *mut BTreeSet<String>);
             if !name.is_empty() && !name.starts_with('@') {
                 set.insert(name);
             }
-            1 // 继续枚举
+            BOOL(1) // 继续枚举
         }
 
         unsafe {
@@ -489,18 +487,21 @@ pub fn list_system_fonts() -> Result<Vec<String>, String> {
             }
 
             let mut lf = LOGFONTW::default();
-            lf.lfCharSet = 0; // DEFAULT_CHARSET = 0 → 枚举所有字符集的字体
+            lf.lfCharSet = FONT_CHARSET(0); // DEFAULT_CHARSET → 枚举所有字符集的字体
 
-            EnumFontFamiliesExW(
+            let ret = EnumFontFamiliesExW(
                 hdc,
                 &lf,
                 Some(callback),
-                fonts_ptr as usize,
+                LPARAM(fonts_ptr),
                 0,
-            )
-            .map_err(|e| format!("EnumFontFamiliesExW 失败: {}", e))?;
+            );
 
             ReleaseDC(HWND(std::ptr::null_mut()), hdc);
+
+            if ret == 0 {
+                return Err("EnumFontFamiliesExW 失败".into());
+            }
 
             Ok(fonts.into_iter().collect())
         }

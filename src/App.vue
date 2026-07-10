@@ -19,6 +19,8 @@ const activeTab = ref<Tab>("clips");
 const theme = ref<"dark" | "light">("dark");
 const uiFont = ref("系统默认");
 const clipFont = ref("系统默认");
+const uiFontSize = ref(13);
+const clipFontSize = ref(13);
 
 // 剪切板状态
 const clips = ref<Clip[]>([]);
@@ -242,8 +244,20 @@ function applyClipFont(f: string) {
   invoke("set_setting", { key: "clip_font", value: f });
 }
 
+// 字体大小应用
+function applyUiFontSize(px: number) {
+  document.documentElement.style.setProperty("--ui-font-size", px + "px");
+  invoke("set_setting", { key: "ui_font_size", value: String(px) });
+}
+function applyClipFontSize(px: number) {
+  document.documentElement.style.setProperty("--clip-font-size", px + "px");
+  invoke("set_setting", { key: "clip_font_size", value: String(px) });
+}
+
 watch(uiFont, (f) => applyUiFont(f));
 watch(clipFont, (f) => applyClipFont(f));
+watch(uiFontSize, (px) => applyUiFontSize(px));
+watch(clipFontSize, (px) => applyClipFontSize(px));
 
 watch(theme, (t) => applyTheme(t));
 
@@ -270,9 +284,15 @@ onMounted(async () => {
   if (savedUiFont) uiFont.value = savedUiFont;
   const savedClipFont = await invoke<string | null>("get_setting", { key: "clip_font" });
   if (savedClipFont) clipFont.value = savedClipFont;
+  const savedUiFontSize = await invoke<string | null>("get_setting", { key: "ui_font_size" });
+  if (savedUiFontSize) uiFontSize.value = parseInt(savedUiFontSize) || 13;
+  const savedClipFontSize = await invoke<string | null>("get_setting", { key: "clip_font_size" });
+  if (savedClipFontSize) clipFontSize.value = parseInt(savedClipFontSize) || 13;
   // 立即应用字体（watch 不会在 set 值时触发，手动应用）
   document.documentElement.style.setProperty("--ui-font", toCssFont(uiFont.value, '"Segoe UI", system-ui, sans-serif'));
   document.documentElement.style.setProperty("--clip-font", toCssFont(clipFont.value, '"Consolas", "Courier New", monospace'));
+  document.documentElement.style.setProperty("--ui-font-size", uiFontSize.value + "px");
+  document.documentElement.style.setProperty("--clip-font-size", clipFontSize.value + "px");
 
   await loadClips();
 
@@ -439,9 +459,13 @@ onUnmounted(() => {
       :theme="theme"
       :ui-font="uiFont"
       :clip-font="clipFont"
+      :ui-font-size="uiFontSize"
+      :clip-font-size="clipFontSize"
       @update:theme="theme = $event"
       @update:ui-font="uiFont = $event"
       @update:clip-font="clipFont = $event"
+      @update:ui-font-size="uiFontSize = $event"
+      @update:clip-font-size="clipFontSize = $event"
     />
   </div>
 </template>
@@ -459,6 +483,8 @@ onUnmounted(() => {
   --green: #a6e3a1;
   --ui-font: "Segoe UI", system-ui, sans-serif;
   --clip-font: "Consolas", "Courier New", monospace;
+  --ui-font-size: 13px;
+  --clip-font-size: 13px;
 }
 
 /* ===== 浅色主题 ===== */
@@ -482,6 +508,7 @@ onUnmounted(() => {
 
 body {
   font-family: var(--ui-font);
+  font-size: var(--ui-font-size);
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
@@ -593,7 +620,7 @@ body {
 .clip-content {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--clip-font-size);
   line-height: 1.4;
 }
 
@@ -764,7 +791,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
   font-family: var(--clip-font);
-  font-size: 13px;
+  font-size: var(--clip-font-size);
   line-height: 1.5;
   resize: none;
   outline: none;

@@ -3,11 +3,19 @@ import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
-const props = defineProps<{ theme: "dark" | "light"; uiFont: string; clipFont: string }>();
+const props = defineProps<{
+  theme: "dark" | "light";
+  uiFont: string;
+  clipFont: string;
+  uiFontSize: number;
+  clipFontSize: number;
+}>();
 const emit = defineEmits<{
   "update:theme": [value: "dark" | "light"];
   "update:ui-font": [value: string];
   "update:clip-font": [value: string];
+  "update:ui-font-size": [value: number];
+  "update:clip-font-size": [value: number];
 }>();
 
 const hotkey = ref("Ctrl+Shift+V");
@@ -28,6 +36,17 @@ function onUiFontChange(e: Event) {
 
 function onClipFontChange(e: Event) {
   emit("update:clip-font", (e.target as HTMLSelectElement).value);
+}
+
+// 字体大小选项
+const fontSizeOptions = [11, 12, 13, 14, 15, 16, 18, 20];
+
+function onUiFontSizeChange(e: Event) {
+  emit("update:ui-font-size", parseInt((e.target as HTMLSelectElement).value));
+}
+
+function onClipFontSizeChange(e: Event) {
+  emit("update:clip-font-size", parseInt((e.target as HTMLSelectElement).value));
 }
 
 async function loadSettings() {
@@ -220,7 +239,7 @@ onMounted(() => {
           <span class="label-text">界面字体</span>
           <span class="label-desc">按钮、标签、设置等 UI 文字</span>
         </div>
-        <div class="setting-control">
+        <div class="setting-control font-control-group">
           <select
             class="font-select"
             :value="props.uiFont"
@@ -234,6 +253,19 @@ onMounted(() => {
               {{ name }}
             </option>
           </select>
+          <select
+            class="font-size-select"
+            :value="props.uiFontSize"
+            @change="onUiFontSizeChange"
+          >
+            <option
+              v-for="size in fontSizeOptions"
+              :key="size"
+              :value="size"
+            >
+              {{ size }}px
+            </option>
+          </select>
         </div>
       </div>
 
@@ -243,7 +275,7 @@ onMounted(() => {
           <span class="label-text">剪切板字体</span>
           <span class="label-desc">剪切板内容与编辑区域文字</span>
         </div>
-        <div class="setting-control">
+        <div class="setting-control font-control-group">
           <select
             class="font-select"
             :value="props.clipFont"
@@ -255,6 +287,19 @@ onMounted(() => {
               :value="name"
             >
               {{ name }}
+            </option>
+          </select>
+          <select
+            class="font-size-select"
+            :value="props.clipFontSize"
+            @change="onClipFontSizeChange"
+          >
+            <option
+              v-for="size in fontSizeOptions"
+              :key="size"
+              :value="size"
+            >
+              {{ size }}px
             </option>
           </select>
         </div>
@@ -492,6 +537,36 @@ onMounted(() => {
 }
 
 .font-select:focus {
+  border-color: var(--accent);
+}
+
+/* 字体 + 大小组合 */
+.font-control-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.font-size-select {
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--ui-font);
+  cursor: pointer;
+  outline: none;
+  width: 80px;
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+
+.font-size-select:hover {
+  border-color: var(--accent);
+}
+
+.font-size-select:focus {
   border-color: var(--accent);
 }
 

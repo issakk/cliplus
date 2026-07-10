@@ -441,3 +441,73 @@ pub fn paste_to_active_window(app: tauri::AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+/// 列出系统已安装字体名（去重、排序）
+#[tauri::command]
+pub fn list_system_fonts() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::collections::BTreeSet;
+        use windows::Win32::Graphics::Gdi::{
+            EnumFontFamiliesExW, LOGFONTW, NEWTEXTMETRICEXW, FONT_RESOURCE_FILE_HANDLE,
+            GetDC, ReleaseDC,
+        };
+        use windows::Win32::Foundation::HWND;
+
+        let mut fonts: BTreeSet<String> = BTreeSet::new();
+        let fonts_ptr = &mut fonts as *mut BTreeSet<String>;
+
+        extern "system" fn callback(
+            _elf: *const LOGFONTW,
+            _ntm: *const NEWTEXTMETRICEXW,
+            _font_type: u32,
+            lparam: usize,
+        ) -> i32 {
+            // 从 LOGFONTW 读取字体名
+            let lf = unsafe { &*_elf };
+            // lfFaceName 是 [u16; 32]，以 null 结尾
+            let mut end = 0;
+            for i in 0..32 {
+                if lf.lfFaceName[i] == 0 {
+                    end = i;
+                    break;
+                }
+                end = i + 1;
+            }
+            let name = String::from_utf16_lossy(&lf.lfFaceName[..end]);
+            let set = unsafe { &mut *(lparam as *mut BTreeSet<String>) };
+            if !name.is_empty() && !name.starts_with('@') {
+                set.insert(name);
+            }
+            1 // 继续枚举
+        }
+
+        unsafe {
+            let hdc = GetDC(HWND(std::ptr::null_mut()));
+            if hdc.is_invalid() {
+                return Err("GetDC 失败".into());
+            }
+
+            let mut lf = LOGFONTW::default();
+            lf.lfCharSet = 0; // DEFAULT_CHARSET = 0 → 枚举所有字符集的字体
+
+            EnumFontFamiliesExW(
+                hdc,
+                &lf,
+                Some(callback),
+                fonts_ptr as usize,
+                0,
+            )
+            .map_err(|e| format!("EnumFontFamiliesExW 失败: {}", e))?;
+
+            ReleaseDC(HWND(std::ptr::null_mut()), hdc);
+
+            Ok(fonts.into_iter().collect())
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("仅支持 Windows".into())
+    }
+}

@@ -3,8 +3,12 @@ import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
-const props = defineProps<{ theme: "dark" | "light" }>();
-const emit = defineEmits<{ "update:theme": [value: "dark" | "light"] }>();
+const props = defineProps<{ theme: "dark" | "light"; uiFont: string; clipFont: string }>();
+const emit = defineEmits<{
+  "update:theme": [value: "dark" | "light"];
+  "update:ui-font": [value: string];
+  "update:clip-font": [value: string];
+}>();
 
 const hotkey = ref("Ctrl+Shift+V");
 const autoStart = ref(false);
@@ -13,6 +17,18 @@ const isListeningHotkey = ref(false);
 
 // 同步盘目录
 const syncDir = ref("");
+
+// 系统字体列表（从后端读取），UI 字体额外含"系统默认"选项
+const uiFontOptions = ref<string[]>([]);
+const clipFontOptions = ref<string[]>([]);
+
+function onUiFontChange(e: Event) {
+  emit("update:ui-font", (e.target as HTMLSelectElement).value);
+}
+
+function onClipFontChange(e: Event) {
+  emit("update:clip-font", (e.target as HTMLSelectElement).value);
+}
 
 async function loadSettings() {
   const h = await invoke<string | null>("get_setting", { key: "hotkey" });
@@ -23,6 +39,15 @@ async function loadSettings() {
 
   try {
     syncDir.value = await invoke<string>("get_sync_dir") || "";
+  } catch {}
+
+  // 读取系统字体列表
+  try {
+    const fonts = await invoke<string[]>("list_system_fonts");
+    // UI 字体：前置"系统默认"选项
+    uiFontOptions.value = ["系统默认", ...fonts];
+    // 剪切板字体：前置"系统默认"选项
+    clipFontOptions.value = ["系统默认", ...fonts];
   } catch {}
 }
 
@@ -186,6 +211,52 @@ onMounted(() => {
               深色
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- 界面字体 -->
+      <div class="setting-item">
+        <div class="setting-label">
+          <span class="label-text">界面字体</span>
+          <span class="label-desc">按钮、标签、设置等 UI 文字</span>
+        </div>
+        <div class="setting-control">
+          <select
+            class="font-select"
+            :value="props.uiFont"
+            @change="onUiFontChange"
+          >
+            <option
+              v-for="name in uiFontOptions"
+              :key="name"
+              :value="name"
+            >
+              {{ name }}
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 剪切板字体 -->
+      <div class="setting-item">
+        <div class="setting-label">
+          <span class="label-text">剪切板字体</span>
+          <span class="label-desc">剪切板内容与编辑区域文字</span>
+        </div>
+        <div class="setting-control">
+          <select
+            class="font-select"
+            :value="props.clipFont"
+            @change="onClipFontChange"
+          >
+            <option
+              v-for="name in clipFontOptions"
+              :key="name"
+              :value="name"
+            >
+              {{ name }}
+            </option>
+          </select>
         </div>
       </div>
 
@@ -399,6 +470,29 @@ onMounted(() => {
   background: var(--accent);
   color: var(--bg);
   font-weight: 500;
+}
+
+/* 字体下拉选择 */
+.font-select {
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--ui-font);
+  cursor: pointer;
+  outline: none;
+  min-width: 160px;
+  transition: border-color 0.15s;
+}
+
+.font-select:hover {
+  border-color: var(--accent);
+}
+
+.font-select:focus {
+  border-color: var(--accent);
 }
 
 /* 数据库路径 */

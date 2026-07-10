@@ -17,6 +17,8 @@ type Tab = "clips" | "snippets" | "settings";
 
 const activeTab = ref<Tab>("clips");
 const theme = ref<"dark" | "light">("dark");
+const uiFont = ref("系统默认");
+const clipFont = ref("系统默认");
 
 // 剪切板状态
 const clips = ref<Clip[]>([]);
@@ -216,12 +218,26 @@ function onGlobalKeydown(e: KeyboardEvent) {
     copySelected();
   }
 }
-
-// 主题切换
-function applyTheme(t: "dark" | "light") {
-  document.documentElement.setAttribute("data-theme", t);
-  invoke("set_setting", { key: "theme", value: t });
+// 字体名 → CSS font-family 值
+function toCssFont(name: string, fallback: string): string {
+  if (!name || name === "系统默认") return fallback;
+  return `"${name}", ${fallback}`;
 }
+
+// 字体应用
+function applyUiFont(f: string) {
+  const css = toCssFont(f, '"Segoe UI", system-ui, sans-serif');
+  document.documentElement.style.setProperty("--ui-font", css);
+  invoke("set_setting", { key: "ui_font", value: f });
+}
+function applyClipFont(f: string) {
+  const css = toCssFont(f, '"Consolas", "Courier New", monospace');
+  document.documentElement.style.setProperty("--clip-font", css);
+  invoke("set_setting", { key: "clip_font", value: f });
+}
+
+watch(uiFont, (f) => applyUiFont(f));
+watch(clipFont, (f) => applyClipFont(f));
 
 watch(theme, (t) => applyTheme(t));
 
@@ -242,6 +258,15 @@ onMounted(async () => {
   // 加载主题设置
   const savedTheme = await invoke<string | null>("get_setting", { key: "theme" });
   if (savedTheme === "light") theme.value = "light";
+
+  // 加载字体设置
+  const savedUiFont = await invoke<string | null>("get_setting", { key: "ui_font" });
+  if (savedUiFont) uiFont.value = savedUiFont;
+  const savedClipFont = await invoke<string | null>("get_setting", { key: "clip_font" });
+  if (savedClipFont) clipFont.value = savedClipFont;
+  // 立即应用字体（watch 不会在 set 值时触发，手动应用）
+  document.documentElement.style.setProperty("--ui-font", toCssFont(uiFont.value, '"Segoe UI", system-ui, sans-serif'));
+  document.documentElement.style.setProperty("--clip-font", toCssFont(clipFont.value, '"Consolas", "Courier New", monospace'));
 
   await loadClips();
 
@@ -406,13 +431,13 @@ onUnmounted(() => {
     <Settings
       v-if="activeTab === 'settings'"
       :theme="theme"
+      :ui-font="uiFont"
+      :clip-font="clipFont"
       @update:theme="theme = $event"
+      @update:ui-font="uiFont = $event"
+      @update:clip-font="clipFont = $event"
     />
   </div>
-</template>
-
-<style>
-/* ===== 深色主题（默认） ===== */
 :root {
   --bg: #1e1e2e;
   --bg-secondary: #313244;
@@ -423,6 +448,8 @@ onUnmounted(() => {
   --border: #585b70;
   --red: #f38ba8;
   --green: #a6e3a1;
+  --ui-font: "Segoe UI", system-ui, sans-serif;
+  --clip-font: "Consolas", "Courier New", monospace;
 }
 
 /* ===== 浅色主题 ===== */
@@ -445,7 +472,7 @@ onUnmounted(() => {
 }
 
 body {
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: var(--ui-font);
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
@@ -564,6 +591,7 @@ body {
 .clip-text {
   white-space: pre-wrap;
   word-break: break-all;
+  font-family: var(--clip-font);
 }
 
 .clip-image {
@@ -726,8 +754,7 @@ body {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--text);
-  font-family: "Consolas", "Segoe UI", monospace;
+  font-family: var(--clip-font);
   font-size: 13px;
   line-height: 1.5;
   resize: none;

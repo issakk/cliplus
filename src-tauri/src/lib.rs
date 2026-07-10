@@ -171,6 +171,7 @@ pub fn run() {
             commands::register_hotkey,
             commands::paste_to_active_window,
             commands::suppress_next_clip,
+            commands::list_system_fonts,
         ])
         .build(tauri::generate_context!())
         .expect("运行 Tauri 应用失败")

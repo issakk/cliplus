@@ -451,7 +451,7 @@ pub fn list_system_fonts() -> Result<Vec<String>, String> {
         use windows::Win32::Graphics::Gdi::{
             EnumFontFamiliesExW, FONT_CHARSET, LOGFONTW, GetDC, ReleaseDC,
         };
-        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+        use windows::Win32::Foundation::{HWND, LPARAM};
 
         let mut fonts: BTreeSet<String> = BTreeSet::new();
         let fonts_ptr = &mut fonts as *mut BTreeSet<String> as isize;
@@ -461,7 +461,7 @@ pub fn list_system_fonts() -> Result<Vec<String>, String> {
             _ntm: *const windows::Win32::Graphics::Gdi::TEXTMETRICW,
             _font_type: u32,
             lparam: LPARAM,
-        ) -> BOOL {
+        ) -> i32 {
             let lf = &*elf;
             // lfFaceName 是 [u16; 32]，以 null 结尾
             let mut end = 0;
@@ -477,7 +477,7 @@ pub fn list_system_fonts() -> Result<Vec<String>, String> {
             if !name.is_empty() && !name.starts_with('@') {
                 set.insert(name);
             }
-            BOOL(1) // 继续枚举
+            1 // 继续枚举
         }
 
         unsafe {

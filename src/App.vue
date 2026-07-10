@@ -218,6 +218,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
     copySelected();
   }
 }
+// 主题切换
+function applyTheme(t: "dark" | "light") {
+  document.documentElement.setAttribute("data-theme", t);
+  invoke("set_setting", { key: "theme", value: t });
+}
+
 // 字体名 → CSS font-family 值
 function toCssFont(name: string, fallback: string): string {
   if (!name || name === "系统默认") return fallback;
@@ -438,6 +444,9 @@ onUnmounted(() => {
       @update:clip-font="clipFont = $event"
     />
   </div>
+</template>
+
+<style>
 :root {
   --bg: #1e1e2e;
   --bg-secondary: #313244;

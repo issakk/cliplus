@@ -1,1 +1,1 @@
-{"root":["./src/main.ts","./src/vite-env.d.ts","./src/app.vue","./src/components/settings.vue","./src/components/snippetpanel.vue"],"version":"5.6.3"}
+{"root":["./src/main.ts","./src/vite-env.d.ts","./src/App.vue","./src/components/Settings.vue","./src/components/SnippetPanel.vue"],"version":"5.6.3"}

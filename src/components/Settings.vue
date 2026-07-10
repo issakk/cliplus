@@ -7,14 +7,12 @@ const props = defineProps<{
   theme: "dark" | "light";
   uiFont: string;
   clipFont: string;
-  uiFontSize: number;
   clipFontSize: number;
 }>();
 const emit = defineEmits<{
   "update:theme": [value: "dark" | "light"];
   "update:ui-font": [value: string];
   "update:clip-font": [value: string];
-  "update:ui-font-size": [value: number];
   "update:clip-font-size": [value: number];
 }>();
 
@@ -41,9 +39,6 @@ function onClipFontChange(e: Event) {
 // 字体大小选项
 const fontSizeOptions = [11, 12, 13, 14, 15, 16, 18, 20];
 
-function onUiFontSizeChange(e: Event) {
-  emit("update:ui-font-size", parseInt((e.target as HTMLSelectElement).value));
-}
 
 function onClipFontSizeChange(e: Event) {
   emit("update:clip-font-size", parseInt((e.target as HTMLSelectElement).value));
@@ -239,7 +234,7 @@ onMounted(() => {
           <span class="label-text">界面字体</span>
           <span class="label-desc">按钮、标签、设置等 UI 文字</span>
         </div>
-        <div class="setting-control font-control-group">
+        <div class="setting-control">
           <select
             class="font-select"
             :value="props.uiFont"
@@ -251,19 +246,6 @@ onMounted(() => {
               :value="name"
             >
               {{ name }}
-            </option>
-          </select>
-          <select
-            class="font-size-select"
-            :value="props.uiFontSize"
-            @change="onUiFontSizeChange"
-          >
-            <option
-              v-for="size in fontSizeOptions"
-              :key="size"
-              :value="size"
-            >
-              {{ size }}px
             </option>
           </select>
         </div>
